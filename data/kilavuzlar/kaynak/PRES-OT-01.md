@@ -33,7 +33,7 @@ Panelde bir alarm çıktığında ya da presin normal çalışmadığını fark 
 2) Paneldeki alarm kodunu ve o andaki basınç değerini not edin.
 3) Kaçak, duman, koku veya olağan dışı ses olup olmadığına bakın; yaklaşmadan uzaktan gözlemleyin.
 4) Andon butonuna basın: sarı ışık yardım gerektiğini, kırmızı ışık hattın durduğunu bildirir.
-5) Andon uygulamasından arıza kaydı veya bakım talebi açın; not ettiğiniz alarm kodunu ve gözlemlerinizi yazın.
+5) Hata Asistanı'ndan arıza kaydı veya bakım talebi açın; not ettiğiniz alarm kodunu ve gözlemlerinizi yazın.
 6) Bakım ekibi gelene kadar hattın başında kalın ve ekibe gözlemlerinizi anlatın.
 
 Operatör hidrolik hortumlara, elektrik panosuna ve kalıp içine müdahale etmez.

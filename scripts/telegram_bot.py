@@ -1,4 +1,4 @@
-"""Andon Telegram botunu çalıştırır (uzun yoklama; dışarıya açık bir adres gerekmez).
+"""Hata Asistanı Telegram botunu çalıştırır (uzun yoklama; dışarıya açık bir adres gerekmez).
 
 Kullanım:
     python scripts/telegram_bot.py

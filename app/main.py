@@ -1,4 +1,4 @@
-"""Andon API.
+"""Hata Asistanı API.
 
 Çalıştırmak için: uvicorn app.main:app --reload
 Belgeler: http://localhost:8000/docs  (sağ üstteki "Authorize" ile giriş yapılır)
@@ -441,7 +441,7 @@ def uygulama_olustur(model_on_yukle: bool = True) -> FastAPI:
     Testler `model_on_yukle=False` verir; embedding modeli yerine sahte embedder kullanırlar.
     """
     uygulama = FastAPI(
-        title="Andon",
+        title="Hata Asistanı",
         description="Fabrika verisi ve bakım kılavuzları üzerinde çalışan yapay zekâ asistanı.",
         version=__version__,
         lifespan=lifespan,

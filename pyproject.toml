@@ -48,6 +48,10 @@ extend-exclude = [".claude"]
 # E/F: temel hatalar, I: import sırası, B: sık yapılan hatalar, UP: modern Python yazımı
 select = ["E", "F", "I", "B", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+# Tanıtım PDF'inin HTML ve CSS şablonları; satırları bölmek şablonu okunmaz yapar.
+"sunum/pdf_olustur.py" = ["E501"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]  # testler scripts/ altındaki modülleri de import edebilsin

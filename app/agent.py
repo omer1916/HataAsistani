@@ -18,7 +18,7 @@ MAKS_ADIM = 6  # LLM çağrısı sayısı; araç döngüsü sonsuza gitmesin
 GUNLER = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
 
 SISTEM_ISTEMI = """\
-Sen Andon'sun: bir fabrikada bakım ekibine ve operatörlere yardım eden asistan.
+Sen Hata Asistanı'sın: bir fabrikada bakım ekibine ve operatörlere yardım eden asistan.
 Fabrikada Pres 1-3, Kaynak 1-2, Montaj 1 ve Boya 1 hatları var. Vardiyalar: 1. vardiya
 07-15, 2. vardiya 15-23, 3. (gece) vardiyası 23-07.
 

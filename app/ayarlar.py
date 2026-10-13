@@ -32,7 +32,7 @@ class Ayarlar(BaseSettings):
 
     # Telegram botu (scripts/telegram_bot.py). Token @BotFather'dan alınır.
     telegram_bot_token: str | None = None
-    # Botun kullanıcı adı (ör. andon_fabrika_bot); verilirse arayüz tek tıkla eşleştirme
+    # Botun kullanıcı adı (ör. hata_asistani_bot); verilirse arayüz tek tıkla eşleştirme
     # bağlantısı gösterir.
     telegram_bot_kullanici_adi: str | None = None
     # Arıza bildiriminin ayrıntısı. Bot mesajları Telegram sunucularından geçer; "kisa" modda

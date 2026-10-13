@@ -1,4 +1,4 @@
-// Andon sohbet ekranı. Çerçeve yok; API'ye fetch ile konuşur.
+// Hata Asistanı sohbet ekranı. Çerçeve yok; API'ye fetch ile konuşur.
 
 import { guvenliMarkdown } from "./metin.js";
 import { oeeEkrani } from "./oee.js";

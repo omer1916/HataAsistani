@@ -1,0 +1,330 @@
+"""Hata Asistanı tanıtım PDF'ini (A4, 4 sayfa) üretir ve Chrome ile yazdırır.
+
+    python sunum/ekran_goruntuleri.py --adres http://127.0.0.1:8000   # önce ekranlar
+    python sunum/pdf_olustur.py
+
+Ekran görüntüleri çalışan uygulamadan alınır (sunum/ekranlar/); bu betik onlardan ilgili
+bölgeleri kırpar, tanitim.html'i yazar ve Chrome/Edge'in başsız modu ile PDF'e basar.
+Görünüm Isıtmalı Güneş Bankı sunumuyla aynı aileden: iki sunum art arda gösteriliyor.
+"""
+
+import shutil
+import subprocess
+from pathlib import Path
+
+from PIL import Image
+
+KLASOR = Path(__file__).resolve().parent
+EKRANLAR = KLASOR / "ekranlar"
+KESITLER = EKRANLAR / "kesit"
+CIKTI_HTML = KLASOR / "tanitim.html"
+CIKTI_PDF = KLASOR / "Hata-Asistani-Tanitim.pdf"
+CHROME_ADAYLARI = (
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    "chrome",
+    "google-chrome",
+    "chromium",
+)
+
+# Ekran görüntülerinden alınacak bölgeler (piksel; görüntüler 2x ölçekle alınır).
+KESIT = {
+    # Uygulama içeriği ekranın ortasında; yanlardaki boşluk ve üst çubuk kırpılır, yazı büyür.
+    "sohbet": (430, 125, 2130, 1340),  # soru, cevap, kaynaklar ve çağrılan araçlar
+    "kaynak": (300, 83, 2260, 1250),  # kaynak tıklanınca açılan kılavuz penceresi
+    "oee": (180, 140, 2380, 1250),  # göstergeler ve günlük OEE
+    "rapor": (180, 120, 2380, 1120),  # göstergeler ve asistanın denetlenmiş yorumu
+    "plan": (540, 455, 2668, 1410),  # özet ve planın seçtiği makineler
+}
+
+
+def kesitleri_hazirla() -> None:
+    KESITLER.mkdir(exist_ok=True)
+    for ad, kutu in KESIT.items():
+        with Image.open(EKRANLAR / f"{ad}.png") as goruntu:
+            goruntu.crop(kutu).save(KESITLER / f"{ad}.png", optimize=True)
+
+
+CSS = """
+@page { size: A4; margin: 0; }
+:root {
+  --murekkep: #14182b; --murekkep-2: #464d66; --soluk: #77809a; --cizgi: #e2e5ee; --zemin-2: #f3f5fa;
+  --vurgu: #1f4fd1; --yesil: #16a34a; --sari: #e0a800; --kirmizi: #dc2626; --gece: #0b1020;
+  --baslik: "Barlow Condensed", "Arial Narrow", "Segoe UI", sans-serif;
+  --metin: "Barlow", "Segoe UI", Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { font-family: var(--metin); color: var(--murekkep); font-size: 10.5pt; line-height: 1.42;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+h1, h2, h3 { font-family: var(--baslik); margin: 0; line-height: 1.05; text-wrap: balance; }
+h2 { font-size: 25pt; font-weight: 650; margin: 4mm 0 3mm; max-width: 170mm; }
+h3 { font-size: 13pt; font-weight: 600; margin-bottom: 1.5mm; }
+p { margin: 0 0 2mm; }
+.sayfa { width: 210mm; height: 297mm; padding: 15mm 17mm 13mm; position: relative; overflow: hidden;
+  page-break-after: always; break-after: page; }
+.sayfa:last-child { page-break-after: auto; break-after: auto; }
+.ust-serit { display: flex; justify-content: space-between; align-items: baseline;
+  border-bottom: 0.4mm solid var(--cizgi); padding-bottom: 2.5mm; font-size: 9pt; color: var(--soluk); }
+.ust-serit span:first-child { font-family: var(--baslik); font-size: 13pt; color: var(--murekkep); }
+.alt-not { position: absolute; left: 17mm; right: 17mm; bottom: 7mm; display: flex;
+  justify-content: space-between; font-size: 7.5pt; color: var(--soluk); }
+.giris { font-size: 11pt; color: var(--murekkep-2); max-width: 172mm; margin-bottom: 4mm; }
+.logo { height: 0.95em; width: auto; aspect-ratio: 83 / 56; vertical-align: -0.12em; margin-right: 0.3em; }
+
+/* Kapak */
+.kapak { background: var(--gece); color: #eef1ff; display: flex; flex-direction: column; }
+.kapak-ust { display: flex; justify-content: space-between; align-items: center; font-size: 9.5pt;
+  color: #aab3d4; }
+.kapak .marka { font-family: var(--baslik); font-weight: 650; font-size: 15pt; color: #f4f6ff; }
+.kapak h1 { font-size: 40pt; font-weight: 700; margin-top: 12mm; letter-spacing: -0.01em; line-height: 0.98; }
+.kapak-alt { font-size: 12pt; color: #c3cae4; max-width: 168mm; margin-top: 6mm; }
+.kapak-alt q { color: #fff; font-style: italic; }
+.kapak .ekran { margin-top: 7mm; }
+.kapak .ekran img { border: 0.5mm solid #2a3150; }
+.kapak .ekran figcaption { color: #8f98bb; }
+.kapak-ekip { margin-top: auto; display: flex; gap: 4mm; align-items: baseline; font-size: 12pt; }
+.kapak-ekip span { color: #8f98bb; font-size: 10pt; }
+.esin { margin-top: 5mm; padding: 3.5mm 4.5mm; border-radius: 2.5mm; background: #18203a;
+  font-size: 10pt; color: #d5dbf2; }
+.esin b { color: #fff; }
+
+/* Ekran görüntüleri */
+.ekran { margin: 0; }
+.ekran img { width: 100%; display: block; border-radius: 2.2mm; border: 0.35mm solid var(--cizgi);
+  box-shadow: 0 0.6mm 2.4mm rgba(15, 20, 40, 0.12); }
+.ekran figcaption { font-size: 8.5pt; color: var(--soluk); margin-top: 1.8mm; }
+
+/* Akış */
+.akis { list-style: none; padding: 0; margin: 0 0 4mm; display: grid;
+  grid-template-columns: repeat(4, 1fr); gap: 3mm; counter-reset: adim; }
+.akis li { position: relative; padding: 3.5mm 3.5mm 3mm; border-radius: 2.5mm; background: var(--zemin-2);
+  counter-increment: adim; }
+.akis li::before { content: counter(adim); font-family: var(--baslik); font-weight: 700; font-size: 11pt;
+  color: #fff; background: var(--vurgu); width: 6.2mm; height: 6.2mm; border-radius: 50%;
+  display: grid; place-items: center; margin-bottom: 2mm; }
+.akis b { font-family: var(--baslik); font-size: 12.5pt; font-weight: 600; display: block; margin-bottom: 1mm; }
+.akis p { font-size: 9pt; color: var(--murekkep-2); margin: 0; }
+.akis code, .kutu code { font-size: 8.3pt; background: #fff; padding: 0 1mm; border-radius: 1mm; }
+.uc-kutu { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3mm; margin-top: 4mm; }
+.kutu { border: 0.35mm solid var(--cizgi); border-radius: 2.5mm; padding: 3.2mm 3.5mm; }
+.kutu h3 { font-size: 12.5pt; }
+.kutu p { font-size: 9pt; color: var(--murekkep-2); margin: 0; }
+
+/* Panolar */
+.iki { display: grid; grid-template-columns: 1fr 1fr; gap: 5mm; }
+.bolum { margin-top: 4.5mm; }
+.bolum h3 { display: flex; align-items: baseline; gap: 2mm; }
+.etiket { font-family: var(--metin); font-size: 8pt; font-weight: 600; color: var(--vurgu);
+  background: #eaf0ff; padding: 0.4mm 2mm; border-radius: 99mm; }
+.lejant { display: flex; gap: 5mm; font-size: 8.5pt; color: var(--murekkep-2); margin: 1.5mm 0 2.5mm; }
+
+/* Ölçümler */
+.sayilar { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3mm; margin: 3mm 0 4mm; }
+.sayi { border-top: 0.6mm solid var(--vurgu); padding-top: 2mm; }
+.sayi b { font-family: var(--baslik); font-size: 22pt; font-weight: 650; line-height: 1; display: block; }
+.sayi span { font-size: 8.8pt; color: var(--murekkep-2); }
+.tablo { width: 100%; border-collapse: collapse; font-size: 9pt; margin: 1.5mm 0 2mm; }
+.tablo th, .tablo td { text-align: left; vertical-align: top; padding: 1.8mm 2mm;
+  border-bottom: 0.3mm solid var(--cizgi); }
+.tablo th { font-weight: 600; color: var(--murekkep-2); background: var(--zemin-2); }
+.tablo td:first-child { font-weight: 600; width: 33mm; }
+.kucuk { font-size: 8pt; color: var(--soluk); }
+"""
+
+
+def logo() -> str:
+    """HA monogramı (app/static/index.html'dekiyle aynı çizim); rengi yazıdan gelir."""
+    return (
+        '<svg class="logo" viewBox="10 22 83 56" aria-hidden="true">'
+        '<rect x="10" y="22" width="13" height="56" fill="currentColor"/>'
+        '<polygon points="31,78 44.5,78 62,38.6 79.5,78 93,78 68.2,22 55.8,22" fill="currentColor"/>'
+        '<polygon points="23,48 66.18,48 71.06,59 23,59" fill="currentColor"/>'
+        '<polygon points="62,38.6 57.82,48 66.18,48" fill="#f5a524"/>'
+        "</svg>"
+    )
+
+
+def ust_serit(bolum: str) -> str:
+    return f'<div class="ust-serit"><span>{logo()}Hata Asistanı</span><span>{bolum}</span></div>'
+
+
+def alt_not(sayfa: int) -> str:
+    return (
+        '<div class="alt-not"><span>Bütün veriler ve kılavuzlar kurgusaldır; ekran görüntüleri '
+        f"çalışan uygulamadan alındı.</span><span>{sayfa} / 4</span></div>"
+    )
+
+
+def kapak() -> str:
+    return f"""
+<section class="sayfa kapak">
+  <div class="kapak-ust"><span class="marka">{logo()}Hata Asistanı</span><span>Tanıtım · Ekim 2026</span></div>
+  <h1>Arıza olduğunda cevabı, kaynağını göstererek saniyeler içinde veren asistan</h1>
+  <p class="kapak-alt">Operatör ya da bakım mühendisi şöyle yazar:
+    <q>Pres 3 hattında geçen ay kaç arıza oldu, bu tip arızada ilk neye bakmalıyım?</q>
+    Hata Asistanı sayıyı arıza kayıtlarından sayar, ne yapılacağını bakım kılavuzlarında bulur ve
+    her bilginin hangi kılavuzun hangi sayfasından geldiğini gösterir.</p>
+  <figure class="ekran">
+    <img src="ekranlar/kesit/sohbet.png" alt="Sohbet ekranında soru ve kaynaklı cevap">
+    <figcaption>Gerçek ekran görüntüsü. Cevap Gemini modelinden geldi: 2 adım, 3,3 saniye,
+      $0,0027. "29 arıza" sayısı ve dağılımı veritabanından; adımlar PRES-BK-01 kılavuzunun
+      4. sayfasından.</figcaption>
+  </figure>
+  <div class="esin"><b>Isıtmalı Güneş Bankı ile bağlantısı:</b> bankın "bozulunca kendisi haber
+    veren" arıza takip sistemi bu projedeki fikirden doğdu: arızayı kayda geçir, doğru kişiye
+    hemen bildir, ne yapılacağını kaynağıyla söyle.</div>
+  <div class="kapak-ekip"><b>Ömer Daştan</b><span>Bursa Teknik Üniversitesi · github.com/omer1916/andon</span></div>
+</section>"""
+
+
+def nasil_calisir() -> str:
+    return f"""
+<section class="sayfa">
+  {ust_serit("01 Nasıl çalışıyor")}
+  <h2>Bir soru, iki kaynak, kaynağı gösterilen tek cevap</h2>
+  <p class="giris">Yapay zekâ bilgiyi kendisi uydurmaz. Soruyu anlar ve hangi aracın çağrılacağına
+    karar verir; sayıyı veritabanı, ne yapılacağını kılavuz verir.</p>
+  <ol class="akis">
+    <li><b>Soru</b><p>Kullanıcı giriş yapıp sorusunu yazar. Operatör ile bakım mühendisi farklı
+      belgeleri görür.</p></li>
+    <li><b>Karar</b><p>Yapay zekâ (Gemini) soruyu ikiye ayırır ve hazır araçlardan uygun olanları
+      çağırır: <code>ariza_say</code>, <code>dokuman_ara</code>.</p></li>
+    <li><b>İki kaynak</b><p>Arıza sayısı PostgreSQL'den sayılır. Kılavuzlar anlamına göre aranır
+      (pgvector), yalnızca kullanıcının görebildiği belgelerde.</p></li>
+    <li><b>Kaynaklı cevap</b><p>Her bilginin yanında kılavuz kodu ve sayfası yazar; kaynağa
+      tıklanınca PDF o sayfada açılır.</p></li>
+  </ol>
+  <figure class="ekran">
+    <img src="ekranlar/kesit/kaynak.png" alt="Kaynağa tıklanınca açılan kılavuz sayfası">
+    <figcaption>Cevaptaki "PRES-BK-01 · s. 4" kaynağına tıklandığında kılavuz tam o sayfada
+      açılıyor; kullanıcı yapay zekânın söylediğini kendi gözüyle doğrulayabiliyor.</figcaption>
+  </figure>
+  <div class="uc-kutu">
+    <div class="kutu"><h3>Serbest SQL yok</h3><p>Yapay zekâ veritabanına kendisi sorgu yazamaz;
+      yalnızca denetlenen araçları çağırabilir. Bir tabloyu silemez, başka veriyi okuyamaz.</p></div>
+    <div class="kutu"><h3>Rol bazlı yetki</h3><p>Operatör bakım kılavuzlarını göremez. Yetki
+      aramanın içinde: görülmemesi gereken sayfa yapay zekâya hiç ulaşmaz.</p></div>
+    <div class="kutu"><h3>Her istek kayıtlı</h3><p>Hangi aracın çağrıldığı, kaç token harcandığı,
+      maliyet ve süre her istekte veritabanına yazılır.</p></div>
+  </div>
+  {alt_not(2)}
+</section>"""
+
+
+def panolar() -> str:
+    return f"""
+<section class="sayfa">
+  {ust_serit("02 Panolar")}
+  <h2>Arızayı sormadan önce görmek</h2>
+  <p class="giris">Asistanın yanında üç ekran var. Hepsi aynı veritabanından beslenir ve
+    "Asistana sor" düğmesiyle sohbete bağlanır.</p>
+  <div class="bolum">
+    <h3>OEE paneli</h3>
+    <p>OEE, bir hattın gerçekte ne kadar verimli çalıştığını gösterir: kullanılabilirlik ×
+      performans × kalite. Son 30 günde fabrika %77,4'te, Pres 3 ise %63,5 ile kırmızıda. Renkler
+      fabrikalardaki Andon ışıkları gibi (yeşil %85+, sarı %65–85, kırmızı altı); renk körleri için
+      her seviyenin bir şekli de var.</p>
+    <figure class="ekran"><img src="ekranlar/kesit/oee.png" alt="OEE paneli"></figure>
+  </div>
+  <div class="bolum">
+    <h3>Vardiya raporu <span class="etiket">sayılar denetlendi</span></h3>
+    <p>Sayılar veritabanından, yorum yapay zekâdan gelir. Yorumdaki her sayının verilerde geçmesi
+      gerekir; uydurulmuş bir sayı varsa yorum bir kez daha istenir, yine tutmazsa yorumu kurallar
+      yazar.</p>
+    <figure class="ekran"><img src="ekranlar/kesit/rapor.png" alt="Vardiya raporu"></figure>
+  </div>
+  {alt_not(3)}
+</section>"""
+
+
+def olcumler() -> str:
+    return f"""
+<section class="sayfa">
+  {ust_serit("03 Bakım planı, ölçümler ve bank")}
+  <h2>Hangi makineye bakılmalı, sonuçlara ne kadar güvenilir?</h2>
+  <div class="bolum" style="margin-top:2mm">
+    <h3>Bakım planı</h3>
+    <p>Son 90 günün arızalarından her makinenin önümüzdeki hafta arızalanma olasılığı hesaplanır.
+      Ekibin 16 saatlik kapasitesi, beklenen duruşu en çok azaltacak 5 makineye dağıtılır:
+      önlenmesi beklenen duruş 129 dakika.</p>
+    <figure class="ekran"><img src="ekranlar/kesit/plan.png" alt="Bakım planı"></figure>
+  </div>
+  <div class="sayilar">
+    <div class="sayi"><b>30 / 30</b><span>değerlendirme sorusu gerçek modelle doğru cevaplandı
+      (sayı, kaynak, yetki, "bilmiyorum" diyebilme)</span></div>
+    <div class="sayi"><b>%100</b><span>kılavuz aramasında doğru sayfa ilk 3 sonuçta
+      (20 soruluk set)</span></div>
+    <div class="sayi"><b>2.590</b><span>otomatik test; her değişiklikte GitHub'da gerçek
+      veritabanıyla çalışıyor</span></div>
+    <div class="sayi"><b>2,5 sn</b><span>ortalama cevap süresi; 30 sorunun toplam maliyeti
+      $0,04</span></div>
+    <div class="sayi"><b>91,8 (A)</b><span>güvenlik taraması: kod, çalışan uygulama ve SEO
+      (SecScope)</span></div>
+    <div class="sayi"><b>0</b><span>yapay zekânın yazdığı SQL; veritabanına yalnızca hazır
+      araçlarla erişiliyor</span></div>
+  </div>
+  <h3>Aynı fikir, iki yerde</h3>
+  <table class="tablo">
+    <tr><th></th><th>Hata Asistanı (fabrika)</th><th>Isıtmalı Güneş Bankı (şehir)</th></tr>
+    <tr><td>Arızayı kim fark eder?</td><td>Makinenin arıza kaydı; operatörün fotoğraflı bakım talebi</td>
+      <td>Bankın kendi ölçümleri (otomatik kurallar); vatandaşın QR formu</td></tr>
+    <tr><td>Nereye kaydedilir?</td><td>Arıza kaydı ve bakım talebi</td>
+      <td>Arıza takip paneli: açıldı, ekibe atandı, kapandı</td></tr>
+    <tr><td>Ekip nasıl haberdar olur?</td><td>Telegram botu, hat durduğunda bakım ekibine</td>
+      <td>Telegram grubu, kritik ve orta öncelikli kayıtlarda</td></tr>
+    <tr><td>Ne kazanılır?</td><td>Sayı ve talimat saniyeler içinde, kaynağıyla</td>
+      <td>Bir bankın arızalı kalma süresi 56,4 günden 10,2 güne iniyor</td></tr>
+  </table>
+  <p class="kucuk">Teknolojiler: Python, FastAPI, PostgreSQL + pgvector, Google Gemini, Docker.
+    Kod ve ölçümlerin ayrıntısı: github.com/omer1916/andon</p>
+  {alt_not(4)}
+</section>"""
+
+
+def html_yaz() -> None:
+    CIKTI_HTML.write_text(
+        f"""<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Hata Asistanı · Tanıtım</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
+<style>{CSS}</style>
+</head>
+<body>
+{kapak()}
+{nasil_calisir()}
+{panolar()}
+{olcumler()}
+</body>
+</html>
+""",
+        encoding="utf-8",
+    )
+
+
+def main() -> None:
+    kesitleri_hazirla()
+    html_yaz()
+    chrome = next((c for c in CHROME_ADAYLARI if Path(c).exists() or shutil.which(c)), None)
+    if chrome is None:
+        raise SystemExit(f"Chrome/Edge bulunamadı; HTML hazır: {CIKTI_HTML}")
+    subprocess.run(
+        [
+            chrome,
+            "--headless=new",
+            "--disable-gpu",
+            "--no-pdf-header-footer",
+            "--virtual-time-budget=15000",
+            f"--print-to-pdf={CIKTI_PDF}",
+            CIKTI_HTML.as_uri(),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    print(f"PDF yazıldı: {CIKTI_PDF}")
+
+
+if __name__ == "__main__":
+    main()

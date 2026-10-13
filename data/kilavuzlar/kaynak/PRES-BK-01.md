@@ -50,7 +50,7 @@ Operatör panelinde görülen alarm kodları ve anlamları:
 
 ## 3. PERİYODİK BAKIM PLANI
 
-Periyodik bakım Andon sisteminde "periyodik" tipli iş emri olarak açılır ve kapatılırken yapılan işler kayda geçirilir.
+Periyodik bakım Hata Asistanı'nda "periyodik" tipli iş emri olarak açılır ve kapatılırken yapılan işler kayda geçirilir.
 
 ### 3.1 Günlük (operatör ve bakım birlikte)
 
@@ -197,7 +197,7 @@ Robot manuel modda referans noktasına gönderilir (referanslama). Vantuzların 
 
 ## 8. ARIZA KAYDI VE ESKALASYON
 
-- Her arıza Andon sistemine kaydedilir. Kayıtta alarm kodu, yapılan kontroller ve değiştirilen parçanın stok kodu yer alır.
+- Her arıza Hata Asistanı'na kaydedilir. Kayıtta alarm kodu, yapılan kontroller ve değiştirilen parçanın stok kodu yer alır.
 - Yüksek önemli bir arıza 30 dakika içinde giderilemezse bakım şefine haber verilir.
 - Hat 2 saatten uzun süre durursa üretim müdürü bilgilendirilir.
 - Aynı makinede bir ay içinde üçten fazla aynı tip arıza görülürse kök neden analizi başlatılır.

@@ -62,7 +62,7 @@ Aşağıdaki durumlarda operatör üretimi durdurur, Andon butonuna basar ve var
 - Aynı hata tipinin bir saat içinde üç kez görülmesi
 - Emniyetle ilgili bir ölçüde (örneğin kaynak nüfuziyeti) herhangi bir hata bulunması
 
-Hatanın kaynağı bir makine arızasıysa Andon sisteminden arıza kaydı açılır. Bakım müdahalesinden sonra üretime Bölüm 3'e göre ilk parça onayıyla yeniden başlanır.
+Hatanın kaynağı bir makine arızasıysa Hata Asistanı'ndan arıza kaydı açılır. Bakım müdahalesinden sonra üretime Bölüm 3'e göre ilk parça onayıyla yeniden başlanır.
 
 ### 5.3 Geriye dönük kontrol
 

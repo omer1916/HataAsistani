@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <title>Hata Asistanı</title>
+  <defs>
+    <linearGradient id="mavi" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3563ec"/>
+      <stop offset="1" stop-color="#1a3cad"/>
+    </linearGradient>
+  </defs>
+  <!-- Konuşma balonu: asistan -->
+  <path d="M26 6H74A20 20 0 0 1 94 26V66A20 20 0 0 1 74 86H38L20 97L22.5 86H26A20 20 0 0 1 6 66V26A20 20 0 0 1 26 6Z" fill="url(#mavi)"/>
+  <!-- HA monogramı (index.html'deki logoyla aynı çizim): H'nin sağ ayağı A'nın sol ayağı,
+       A'nın içindeki sarı üçgen uyarı işareti -->
+  <g transform="translate(14.5 9) scale(0.71)" fill="#fff">
+    <rect x="10" y="22" width="13" height="56"/>
+    <polygon points="31,78 44.5,78 62,38.6 79.5,78 93,78 68.2,22 55.8,22"/>
+    <polygon points="23,48 66.18,48 71.06,59 23,59"/>
+    <polygon points="62,38.6 57.82,48 66.18,48" fill="#f5a524"/>
+  </g>
+</svg>

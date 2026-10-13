@@ -101,4 +101,4 @@ Fikstürdeki parça varlık sensörleri endüktif sensördür (SNS-001). Sensör
 
 ## 6. KAYIT
 
-Her müdahale Andon sistemine iş emri olarak kaydedilir. Kayıtta robot alarm numarası, yapılan kontroller ve değiştirilen parçanın stok kodu belirtilir. Kaynak kalitesiyle ilgili sorunlarda kalite birimine de haber verilir ve etkilenen parçalar KAL-PR-01'e göre ayrılır.
+Her müdahale Hata Asistanı'na iş emri olarak kaydedilir. Kayıtta robot alarm numarası, yapılan kontroller ve değiştirilen parçanın stok kodu belirtilir. Kaynak kalitesiyle ilgili sorunlarda kalite birimine de haber verilir ve etkilenen parçalar KAL-PR-01'e göre ayrılır.

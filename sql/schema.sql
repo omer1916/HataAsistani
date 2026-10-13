@@ -1,4 +1,4 @@
--- Andon veritabanı şeması.
+-- Hata Asistanı veritabanı şeması.
 -- scripts/seed.py her çalıştığında tabloları silip bu dosyayla yeniden kurar.
 --
 -- Arıza, iş emri ve bakım talebi kayıtları hatta değil makineye bağlıdır;

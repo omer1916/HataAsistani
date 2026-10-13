@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS telegram_kodlari (
     son_gecerlilik  timestamptz NOT NULL
 );
 
--- Bir Andon kullanıcısı tek bir Telegram sohbetine, bir sohbet tek bir kullanıcıya bağlanır.
+-- Bir Hata Asistanı kullanıcısı tek bir Telegram sohbetine, bir sohbet tek bir kullanıcıya bağlanır.
 CREATE TABLE IF NOT EXISTS telegram_baglantilari (
     kullanici_adi  text        PRIMARY KEY,
     chat_id        bigint      NOT NULL UNIQUE,

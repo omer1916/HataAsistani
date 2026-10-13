@@ -1,4 +1,4 @@
-# Andon
+# <img src="app/static/ikon.svg" alt="" width="44" align="absmiddle"> Hata Asistanı
 
 Fabrika verisi ve bakım kılavuzları üzerinde çalışan bir yapay zekâ asistanı. Operatör ya da bakım
 mühendisi sohbet ekranına şöyle bir soru yazar:
@@ -40,7 +40,10 @@ azaltacak makinelere dağıtır. Şu an arızalı olan makine de "tamirden sonra
 parça durumuyla anında bildirim gönderir; sahadan soru sormayı ve fotoğrafla bakım talebi
 açmayı sağlar. Ayrıntılar ve veri gizliliği: [Telegram botu](#telegram-botu).
 
-> Andon, fabrikalarda bir hatta sorun olduğunda yanan uyarı ışığı sisteminin adıdır.
+> **Adı ve logosu:** Proje, fabrikalarda bir hatta sorun olduğunda yanan yeşil-sarı-kırmızı
+> uyarı ışığı sisteminden, *Andon*'dan esinlendi; panellerdeki durum renkleri buradan geliyor.
+> Kod deposunun adı bu yüzden `andon`. Logo adın baş harfleri: H'nin sağ ayağı A'nın sol ayağı,
+> A'nın içindeki sarı üçgen bir uyarı işareti. Sekme ikonunda aynı harfler konuşma balonunda.
 > **Bu projedeki bütün veriler ve kılavuzlar kurgusaldır**; gerçek bir firmaya veya ekipmana ait
 > değildir.
 
@@ -95,7 +98,7 @@ http://localhost:8000/docs adresindedir.
 | Güvenlik | JWT (PyJWT), argon2 (pwdlib) |
 | Arayüz | HTML, CSS, vanilla JavaScript (dış bağımlılık yok) |
 | Telegram | Bot API, httpx ile ince istemci, uzun yoklama (dışarıya açık adres gerekmez) |
-| Kalite | pytest (2575 test), Hypothesis, ruff, GitHub Actions |
+| Kalite | pytest (2590 test), Hypothesis, ruff, GitHub Actions |
 | Çalıştırma | Docker Compose |
 
 ## Telegram botu
@@ -114,8 +117,8 @@ Token'ı almak dışında her şey hazır. Token almadan önce bütün akış ye
 sunucuya karşı çalıştırır (eşleştirme, soru, fotoğraflı talep, komutlar, arıza bildirimi) ve
 bota giden mesajları yazdırır. Gerçek Telegram'a istek gitmez. Token bir paroladır: kimseyle paylaşma, git'e koyma.
 
-1. Telegram'da **@BotFather**'ı aç, `/newbot` yaz. Bota bir ad (ör. *Andon Fabrika Asistanı*)
-   ve sonu `bot` ile biten bir kullanıcı adı (ör. `andon_fabrika_bot`) ver. Verdiği token'ı
+1. Telegram'da **@BotFather**'ı aç, `/newbot` yaz. Bota bir ad (ör. *Hata Asistanı*)
+   ve sonu `bot` ile biten bir kullanıcı adı (ör. `hata_asistani_bot`) ver. Verdiği token'ı
    kopyala.
 2. Aynı sohbette güvenlik için:
    - `/setjoingroups` → botu seç → **Disable** (bot gruplara eklenemesin; bot zaten grupları yok
@@ -133,7 +136,7 @@ bota giden mesajları yazdırır. Gerçek Telegram'a istek gitmez. Token bir par
    ```
    # BotFather'ın verdiği token
    TELEGRAM_BOT_TOKEN=
-   TELEGRAM_BOT_KULLANICI_ADI=andon_fabrika_bot
+   TELEGRAM_BOT_KULLANICI_ADI=hata_asistani_bot
    ```
 4. Botu başlat:
    ```bash
@@ -477,7 +480,7 @@ Kontroller ve testler:
 
 ```bash
 ruff check . && ruff format --check .
-pytest                                  # 2575 test (~1 dk); veritabanı kapalıysa DB testleri atlanır
+pytest                                  # 2590 test (~1 dk); veritabanı kapalıysa DB testleri atlanır
 ```
 
 Testler gerçek bir PostgreSQL'e karşı çalışır: `andon_test` veritabanı sabit bir tarihle üretilen
@@ -597,8 +600,13 @@ scripts/         seed, ingest, kılavuz PDF üretimi, ölçüm ve değerlendirme
 sql/             şema ve referans sorgular
 data/kilavuzlar/ kurgusal kılavuzlar (Markdown kaynak + PDF)
 eval/            arama ve agent değerlendirme setleri
-tests/           2575 test
+sunum/           tanıtım PDF'i (Hata-Asistani-Tanitim.pdf) ve onu üreten betikler
+tests/           2590 test
 ```
+
+Tanıtım PDF'indeki ekran görüntüleri çalışan uygulamadan alınır:
+`python sunum/ekran_goruntuleri.py --adres http://127.0.0.1:8000` (Playwright gerekir, kurulu
+Chrome'u kullanır), ardından `python sunum/pdf_olustur.py`.
 
 ## Bilinen eksikler
 

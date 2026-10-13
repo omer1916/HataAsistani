@@ -1,4 +1,4 @@
-Hedef: Andon, fabrika verisi ve bakım kılavuzları üzerinde çalışan bir FastAPI + LLM agent uygulaması.
+Hedef: Hata Asistanı (depo adı: andon), fabrika verisi ve bakım kılavuzları üzerinde çalışan bir FastAPI + LLM agent uygulaması.
 Kaynak kod /workspace altında, çalışan uygulama http://host.docker.internal:8000 adresinde.
 Bütün veriler kurgusaldır; bu bir yerel test kurulumudur.
 

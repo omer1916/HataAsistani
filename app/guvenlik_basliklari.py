@@ -11,8 +11,8 @@ CSP = "; ".join(
         "default-src 'self'",
         "script-src 'self'",
         "style-src 'self'",
-        # data: favicon, blob: Telegram'dan gelen talep fotoğrafları (rapor.js)
-        "img-src 'self' data: blob:",
+        # blob: Telegram'dan gelen talep fotoğrafları (rapor.js)
+        "img-src 'self' blob:",
         "connect-src 'self'",
         # Kılavuz PDF'i token gerektirdiği için indirilip blob: adresiyle gösterilir (app.js)
         "frame-src blob:",

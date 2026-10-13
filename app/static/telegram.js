@@ -33,7 +33,7 @@ export function telegramPenceresi({ api }) {
       $("telegram-kaldir").hidden = !d.bagli;
       $("telegram-bot-adi").textContent = d.bot_kullanici_adi
         ? `@${d.bot_kullanici_adi}`
-        : "fabrikanızın Andon botunu";
+        : "fabrikanızın Hata Asistanı botunu";
       $("telegram-gizlilik-bildirim").textContent =
         d.bildirim_ayrintisi === "ayrintili"
           ? "Arıza bildirimlerinde bakım rolüne kılavuz alıntısı ve stok bilgisi gider; operatöre yalnızca hattın durduğu."

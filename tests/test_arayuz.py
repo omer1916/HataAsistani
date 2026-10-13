@@ -10,6 +10,11 @@ def test_ana_sayfa_ve_statik_dosyalar_girissiz_sunulur(istemci):
     assert "text/html" in sayfa.headers["content-type"]
     for dosya in ["/static/app.js", "/static/style.css"]:
         assert istemci.get(dosya, headers={"Authorization": ""}).status_code == 200
+    # Sekme ikonu dosyadan gelir; CSP data: adreslerine izin vermez.
+    assert 'href="/static/ikon.svg"' in sayfa.text
+    ikon = istemci.get("/static/ikon.svg", headers={"Authorization": ""})
+    assert ikon.status_code == 200
+    assert ikon.headers["content-type"].startswith("image/svg+xml")
 
 
 @pytest.mark.parametrize(

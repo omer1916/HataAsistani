@@ -46,6 +46,7 @@ def test_csp_satir_ici_ve_dis_kaynaga_izin_vermez():
     assert d["object-src"] == ["'none'"]
     assert d["frame-ancestors"] == ["'none'"]
     assert d["base-uri"] == ["'none'"]
+    assert d["img-src"] == ["'self'", "blob:"]  # data: yok; sekme ikonu dosyadan gelir
 
 
 @pytest.mark.parametrize("yol", ["/docs", "/redoc"])

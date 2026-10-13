@@ -59,7 +59,7 @@ class KilavuzPDF(FPDF):
         self.set_margins(20, 16, 20)
         self.set_auto_page_break(True, margin=18)
         self.set_title(baslik)
-        self.set_author("Andon projesi (kurgusal doküman)")
+        self.set_author("Hata Asistanı projesi (kurgusal doküman)")
         # Sabit tarih: PDF'ler her üretimde aynı çıksın, git'te boş yere değişmesin.
         self.set_creation_date(datetime(2026, 9, 1, tzinfo=TZ))
 
@@ -127,7 +127,7 @@ def _kapak(pdf: KilavuzPDF, kilavuz: dict) -> None:
     pdf.multi_cell(
         0,
         5,
-        "Bu doküman Andon portföy projesi için yazılmış kurgusal bir kılavuzdur; "
+        "Bu doküman Hata Asistanı portföy projesi için yazılmış kurgusal bir kılavuzdur; "
         "gerçek bir ekipmana veya firmaya ait değildir.",
         new_x=XPos.LMARGIN,
         new_y=YPos.NEXT,

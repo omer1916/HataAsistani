@@ -23,7 +23,7 @@ Skill'in diğer 12 skill'i açılış sayfası, React/Tailwind veya görsel üre
 
 ## Plugin'ler (`.claude/settings.json`)
 
-Dosya repoda; andon'u açan her Claude Code oturumu ilk açılışta bu plugin'leri kurmayı önerir.
+Dosya repoda; bu depoyu açan her Claude Code oturumu ilk açılışta bu plugin'leri kurmayı önerir.
 Üçüncü taraf Impeccable ve UI/UX Pro Max bir sürüm etiketine sabitli. Aynı plugin'leri
 bilgisayardaki bütün projelerde açmak için "Bütün projelerde kullanmak için" bölümüne bakın.
 
@@ -75,7 +75,7 @@ index önerir, veritabanı sağlığını kontrol eder. Veriyi ve şemayı deği
   ve "Dependabot security updates" açılmalı. Gizli anahtar taraması için aynı yerde "Secret
   scanning" ve "Push protection" açılabilir (açık repolarda ücretsiz).
 
-## Strix ile andon'u taramak
+## Strix ile Hata Asistanı'nı taramak
 
 Strix, uygulamaya gerçekten saldırıp yalnızca çalışan bir saldırı örneğiyle (PoC) kanıtladığı
 açıkları raporlar. Yalnızca sahibi olunan sistemlere karşı çalıştırılmalı. Docker ve bir LLM
@@ -154,7 +154,7 @@ npx skills add anthropics/skills --skill webapp-testing
 |---|---|
 | OmniRoute | Claude aboneliğini başka bir uygulamaya bağlamak Anthropic'in kullanım koşullarına aykırı; projenin issue'larında bağlandıktan dakikalar sonra kapatılan Claude Max hesapları bildirilmiş |
 | Agent Reach | LinkedIn, Instagram ve X'i kullanıcının oturum çerezleriyle kazır. Bu sitelerin kullanım koşullarına aykırı; README'si hesap kapatılma riskine karşı yan hesap öneriyor. Kişisel veri toplamak KVKK sorunu da doğurur |
-| Supabase plugin'i | Andon kendi PostgreSQL + pgvector'ünü kullanıyor; Supabase yok |
+| Supabase plugin'i | Hata Asistanı kendi PostgreSQL + pgvector'ünü kullanıyor; Supabase yok |
 | Figma MCP | Projede Figma dosyası yok. Gerçek kullanım için ücretli Dev/Full koltuk gerekiyor (ücretsiz koltukta ayda 6 araç çağrısı) |
 | 21st.dev (Magic / 21st MCP) | React + Tailwind bileşenleri üretir ve API anahtarı ister; arayüz vanilla JavaScript |
 | Skill UI | ~240 yıldızlı küçük bir proje, Nisan 2026'dan beri güncellenmemiş ve repoda lisans dosyası yok. Başka bir markanın tasarım sistemini kopyalamak telif ve ticari takdim sorunu doğurabilir |

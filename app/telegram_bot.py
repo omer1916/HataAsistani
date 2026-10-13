@@ -1,4 +1,4 @@
-"""Andon Telegram botu: sahadan soru, fotoğraflı bakım talebi, arıza bildirimi ve komutlar.
+"""Hata Asistanı Telegram botu: sahadan soru, fotoğraflı bakım talebi, arıza bildirimi ve komutlar.
 
 Güvenlik:
 - Bot yalnızca özel sohbetlerde çalışır; grup sohbetleri yok sayılır.
@@ -49,9 +49,9 @@ BildirimAyrintisi = Literal["ayrintili", "kisa"]
 ONEM_ADLARI = {"dusuk": "düşük", "orta": "orta", "yuksek": "yüksek"}
 
 TANITIM = (
-    "Merhaba, ben Andon. Fabrika verisini ve kılavuzları yalnızca eşleşmiş hesaplarla "
-    "paylaşabilirim.\n\nAndon web arayüzünde sağ üstteki <b>Telegram</b> düğmesinden bir kod "
-    "alın ve buraya <code>/baglan 123456</code> biçiminde yazın."
+    "Merhaba, ben Hata Asistanı. Fabrika verisini ve kılavuzları yalnızca eşleşmiş hesaplarla "
+    "paylaşabilirim.\n\nHata Asistanı web arayüzünde sağ üstteki <b>Telegram</b> düğmesinden "
+    "bir kod alın ve buraya <code>/baglan 123456</code> biçiminde yazın."
 )
 
 
@@ -82,10 +82,10 @@ def gizlilik_metni(saglayici: str | None, fotograf_saklama_gun: int) -> str:
     return "\n".join(
         [
             "<b>Veri gizliliği</b>",
-            "• <b>Saklanan:</b> Telegram sohbet numaranız ve Andon kullanıcı adınızla eşleştirme "
-            "zamanı. Telefon numaranız, adınız ve profiliniz saklanmaz.",
+            "• <b>Saklanan:</b> Telegram sohbet numaranız ve Hata Asistanı kullanıcı adınızla "
+            "eşleştirme zamanı. Telefon numaranız, adınız ve profiliniz saklanmaz.",
             f"• <b>Sorularınız</b> cevaplanmak için {llm} gönderilir; soru, cevap ve token "
-            "sayısı Andon'un istek kaydında kullanıcı adınızla tutulur (web arayüzündeki "
+            "sayısı Hata Asistanı'nın istek kaydında kullanıcı adınızla tutulur (web arayüzündeki "
             "sorular gibi).",
             f"• <b>Fotoğraflar</b> açılan bakım talebine eklenir ve {fotograf_saklama_gun} gün "
             "sonra silinir. Telegram sıkıştırırken konum gibi bilgileri siler; dosya olarak "

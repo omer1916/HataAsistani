@@ -145,25 +145,13 @@ code {
   font-size: 0.9rem;
 }
 
-/* Andon kulesi: yeşil, sarı, kırmızı ışık */
-.isiklar {
-  display: inline-flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 3px;
-  border-radius: 5px;
-  background: #1c1f24;
+/* HA monogramı; rengi yazıdan gelir (currentColor), sarı üçgen sabit */
+.logo {
+  flex: none;
+  height: 22px;
+  width: auto;
+  aspect-ratio: 83 / 56;
 }
-
-.isiklar i {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.isiklar .yesil { background: var(--yesil); }
-.isiklar .sari { background: var(--sari); }
-.isiklar .kirmizi { background: var(--kirmizi); }
 
 .oturum {
   display: flex;
