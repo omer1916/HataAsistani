@@ -98,14 +98,14 @@ http://localhost:8000/docs adresindedir.
 | Güvenlik | JWT (PyJWT), argon2 (pwdlib) |
 | Arayüz | HTML, CSS, vanilla JavaScript (dış bağımlılık yok) |
 | Telegram | Bot API, httpx ile ince istemci, uzun yoklama (dışarıya açık adres gerekmez) |
-| Kalite | pytest (2590 test), Hypothesis, ruff, GitHub Actions |
+| Kalite | pytest (2594 test), Hypothesis, ruff, GitHub Actions |
 | Çalıştırma | Docker Compose |
 
 ## Telegram botu
 
 | Ne yapar | Nasıl |
 |---|---|
-| Arıza bildirimi | Hattı durduran yeni bir arıza en geç ~10 saniyede eşleşmiş herkese bildirilir. Bakım rolüne kılavuzdan ilk adım (sayfa numarasıyla) ve ilgili yedek parçaların stoğu gider; operatöre yalnızca hattın durduğu. |
+| Arıza bildirimi | Hattı durduran yeni bir arıza kaydedildiği anda (1 saniyenin altında) eşleşmiş herkese bildirilir. Bakım rolüne kılavuzdan ilk adım (sayfa numarasıyla) ve ilgili yedek parçaların stoğu gider; operatöre yalnızca hattın durduğu. |
 | Sahadan soru | Yazılan her mesaj web arayüzündeki agent'a, kullanıcının kendi rolüyle gider. |
 | Fotoğraflı talep | Fotoğraf + açıklama ("P3-HP'de yağ kaçağı var") ile bakım talebi açılır, fotoğraf talebe eklenir; bakım mühendisi vardiya raporunda görür. |
 | Komutlar | `/rapor` son vardiya raporu, `/oee [hat]` son 7 gün, `/plan [saat]` bakım planı (yalnızca bakım), `/gizlilik`, `/cikis`, `/yardim` |
@@ -142,8 +142,14 @@ bota giden mesajları yazdırır. Gerçek Telegram'a istek gitmez. Token bir par
    ```bash
    docker compose --profile telegram up -d --build    # ya da: python scripts/telegram_bot.py
    ```
+   Bot, uygulama ve veritabanı `restart: unless-stopped` ile çalışır: bundan sonra Docker her
+   açıldığında (bilgisayar yeniden başlasa da) kendiliğinden başlar. Durdurmak için
+   `docker compose --profile telegram stop`; elle durdurulan servis Docker açılınca da kapalı kalır.
 5. Web arayüzünde sağ üstteki **Telegram** düğmesi → **Kod al** → "Telegram'da aç" (ya da botta
-   `/baglan 123456`). Her kullanıcı kendi hesabını bağlar.
+   `/baglan 123456`). Her kullanıcı kendi hesabını **bir kez** bağlar; bağlantı kalıcıdır (çıkış,
+   tarayıcıyı kapatma, yeniden başlatma ve seed'den etkilenmez), yalnızca "Bağlantıyı kaldır"
+   ya da botta `/cikis` ile silinir. Bağlanınca pencere kendiliğinden "Bağlı" olur, üst çubukta
+   **Telegram ✓** görünür.
 6. Bildirimi denemek için hattı durduran bir arıza ekle:
    ```bash
    python scripts/ariza_ekle.py            # P3-HP, hidrolik, yüksek önem
@@ -200,8 +206,15 @@ görüş değildir):
 
 - Bot API'den ayrı bir süreçtir; aynı veritabanını ve aynı modülleri (agent, rapor, bakım
   planı) kullanır. Docker'da `telegram` profiliyle, API'nin sağlıklı olmasını bekleyerek açılır.
-- Uzun yoklama: Telegram'dan en fazla 10 saniye yeni mesaj beklenir, sonra yeni arızalara
-  bakılır. Webhook gerekmez, uygulama dışarıya açılmaz.
+- Mesajlar uzun yoklamayla alınır (mesaj gelince hemen döner); webhook gerekmez, uygulama
+  dışarıya açılmaz.
+- Arıza bildirimi ayrı bir iş parçacığında ve ayrı bir veritabanı bağlantısıyla çalışır, böylece
+  uzun bir LLM cevabını beklemez. Veritabanındaki tetikleyici (`sql/telegram.sql`) arıza
+  eklendiğinde ya da hattı durdurduğu kaydedildiğinde `NOTIFY` gönderir; bot `LISTEN` ile bekler
+  ve anında bildirir. Provada kayıttan iki alıcıya gönderime kadar (kılavuz alıntısı ve stokla
+  birlikte) 47 ms sürdü; önceki 10 saniyelik yoklamada bu süre 10 saniyeye kadar çıkıyordu.
+  Sinyal kaçarsa (bağlantı koptu) 15 saniyede bir yapılan yedek kontrol yakalar. Aynı işlemdeki
+  sinyaller tek bildirimde birleşir: seed yüzlerce arıza yazınca bot bir kez uyanır.
 - Bildirilen son arıza bellekte tutulur. Bot kapalıyken başlayan arızalar bildirilmez; seed
   yeniden çalışıp arıza numaraları küçülürse eski arızalar yeniden bildirilmez. Her arıza en
   fazla bir kez bildirilir. MES bir arızayı önce "hattı durdurmadı" diye yazıp sonra
@@ -480,7 +493,7 @@ Kontroller ve testler:
 
 ```bash
 ruff check . && ruff format --check .
-pytest                                  # 2590 test (~1 dk); veritabanı kapalıysa DB testleri atlanır
+pytest                                  # 2594 test (~1 dk); veritabanı kapalıysa DB testleri atlanır
 ```
 
 Testler gerçek bir PostgreSQL'e karşı çalışır: `andon_test` veritabanı sabit bir tarihle üretilen
@@ -601,7 +614,7 @@ sql/             şema ve referans sorgular
 data/kilavuzlar/ kurgusal kılavuzlar (Markdown kaynak + PDF)
 eval/            arama ve agent değerlendirme setleri
 sunum/           tanıtım PDF'i (Hata-Asistani-Tanitim.pdf) ve onu üreten betikler
-tests/           2590 test
+tests/           2594 test
 ```
 
 Tanıtım PDF'indeki ekran görüntüleri çalışan uygulamadan alınır:

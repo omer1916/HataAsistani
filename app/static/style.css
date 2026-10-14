@@ -160,6 +160,10 @@ code {
   font-size: 0.92rem;
 }
 
+.oturum .metin-dugme {
+  white-space: nowrap; /* dar ekranda "Telegram ✓" iki satıra bölünmesin */
+}
+
 .rol {
   margin-left: 4px;
   padding: 2px 8px;
@@ -1249,6 +1253,22 @@ h3 {
 
 .kod-alani a.ana-dugme {
   text-decoration: none;
+}
+
+.bagli-alani {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border-left: 4px solid var(--yesil);
+  border-radius: 10px;
+  background: var(--kod-zemin);
+}
+
+.bagli-alani p {
+  margin: 0;
+}
+
+.bagli-alani p + p {
+  margin-top: 6px;
 }
 
 .pencere-dugmeleri {
