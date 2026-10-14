@@ -1,5 +1,5 @@
--- Telegram botu tabloları. Her açılışta (scripts/hazirla.py) ve her seed'de çalışır; IF NOT
--- EXISTS sayesinde mevcut eşleştirmeler korunur.
+-- Telegram botu tabloları ve arıza sinyali. Her açılışta (scripts/hazirla.py) ve her seed'de
+-- çalışır; IF NOT EXISTS sayesinde mevcut eşleştirmeler korunur.
 --
 -- Eşleştirme kullanıcı adıyla tutulur, kullanicilar tablosuna yabancı anahtar yoktur: seed o
 -- tabloyu silip yeniden kurar, eşleştirmeler ise seed'den sonra da geçerli kalmalı.
@@ -28,3 +28,20 @@ CREATE TABLE IF NOT EXISTS talep_fotograflari (
     eklenme   timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS talep_fotograflari_talep_id_idx ON talep_fotograflari (talep_id);
+
+-- Anlık arıza bildirimi: arıza eklendiğinde ya da hattı durdurduğu sonradan kaydedildiğinde botu
+-- uyandırır (bot `LISTEN ariza_kayitlari` ile bekler). Sinyal neyin değiştiğini taşımaz, bot yeni
+-- arızaları kendisi bulur; yükün boş olması sayesinde aynı işlemdeki sinyaller (ör. seed'in
+-- yüzlerce satırı) Postgres'te tek bildirimde birleşir. Sinyal kaçarsa (bağlantı koptu) botun
+-- yedek kontrolü yine yakalar. Seed tabloyu yeniden kurunca tetikleyici de silinir; bu dosya
+-- seed'den sonra çalıştığı için yeniden oluşur.
+CREATE OR REPLACE FUNCTION ariza_sinyali() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM pg_notify('ariza_kayitlari', '');
+    RETURN NULL;
+END
+$$;
+
+CREATE OR REPLACE TRIGGER ariza_sinyali
+    AFTER INSERT OR UPDATE OF hat_durdu ON ariza_kayitlari
+    FOR EACH STATEMENT EXECUTE FUNCTION ariza_sinyali();

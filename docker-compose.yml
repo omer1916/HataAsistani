@@ -1,6 +1,9 @@
 services:
   db:
     image: pgvector/pgvector:pg17
+    # Docker açılınca (ör. bilgisayar yeniden başlayınca) kendiliğinden başlasın; elle
+    # durdurulursa (docker compose stop) kapalı kalır.
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-andon}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-andon}
@@ -22,6 +25,7 @@ services:
   # Yalnızca veritabanı gerekiyorsa (yerel geliştirme): docker compose up -d db
   api:
     build: .
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
@@ -51,9 +55,11 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-andon}:${POSTGRES_PASSWORD:-andon}@db:5432/${POSTGRES_DB:-andon}  # secscope: ignore SECRET-DBURL-001 (yalnızca 127.0.0.1 demo veritabanı)
     command: ["python", "-m", "scripts.telegram_bot"]
-    # Ağ kopmalarını bot kendisi yeniden dener; çıkıyorsa ayar hatasıdır (ör. token yok),
-    # sonsuza kadar yeniden başlamasın.
-    restart: on-failure:3
+    # Bot her zaman açık kalsın: Docker açılınca kendiliğinden başlar. Çalışırken ağ ve
+    # veritabanı kopmalarını kendisi yeniden dener. Açılışta Telegram'a ya da veritabanına
+    # ulaşamazsa (bilgisayar internetsiz açıldı, token yok) çıkar ve Docker artan aralıklarla
+    # (en fazla dakikada bir) yeniden başlatır; sebebi günlükte yazar.
+    restart: unless-stopped
     volumes:
       - model-onbellegi:/model-onbellegi
 

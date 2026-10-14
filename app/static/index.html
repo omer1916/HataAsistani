@@ -257,20 +257,30 @@
     <p id="telegram-durum" class="soluk" role="status"></p>
     <p>Telegram'dan soru sorabilir, fotoğraflı bakım talebi açabilir, hat durduğunda anında
       bildirim alabilirsiniz.</p>
-    <ol class="adimlar">
-      <li>Aşağıdan bir eşleştirme kodu alın.</li>
-      <li>Telegram'da <strong id="telegram-bot-adi">fabrikanızın Hata Asistanı botunu</strong> açın ve
-        kodu gönderin.</li>
-    </ol>
-    <div id="telegram-kod-alani" class="kod-alani" hidden>
-      <strong id="telegram-kod" class="telegram-kod" translate="no"></strong>
-      <span>Botta şunu yazın: <code id="telegram-komut" translate="no"></code></span>
-      <span class="soluk" id="telegram-sure"></span>
-      <a id="telegram-ac" class="ana-dugme" target="_blank" rel="noopener" hidden>Telegram'da aç</a>
+    <!-- Bağlantı bir kez kurulur ve kalıcıdır; bağlıyken eşleştirme adımları gösterilmez. -->
+    <div id="telegram-bagli" class="bagli-alani" hidden>
+      <p><strong>✓ Bağlı.</strong> Hat durduğunda bildirim
+        <strong id="telegram-bagli-bot" translate="no"></strong> sohbetinize anında gelir.</p>
+      <p class="soluk">Bağlantı kalıcıdır: çıkış yapsanız, tarayıcıyı kapatsanız ya da bilgisayar
+        yeniden başlasa da sürer. Yalnızca buradan ya da botta <code>/cikis</code> yazarak
+        kaldırılır.</p>
+    </div>
+    <div id="telegram-eslestirme" hidden>
+      <ol class="adimlar">
+        <li>Aşağıdan bir eşleştirme kodu alın (yalnızca bir kez gerekir).</li>
+        <li>Telegram'da <strong id="telegram-bot-adi">fabrikanızın Hata Asistanı botunu</strong> açın ve
+          kodu gönderin. Bağlanınca bu pencere kendiliğinden güncellenir.</li>
+      </ol>
+      <div id="telegram-kod-alani" class="kod-alani" hidden>
+        <strong id="telegram-kod" class="telegram-kod" translate="no"></strong>
+        <span>Botta şunu yazın: <code id="telegram-komut" translate="no"></code></span>
+        <span class="soluk" id="telegram-sure"></span>
+        <a id="telegram-ac" class="ana-dugme" target="_blank" rel="noopener" hidden>Telegram'da aç</a>
+      </div>
     </div>
     <p class="hata-metni" id="telegram-hata" role="alert" hidden></p>
     <div class="pencere-dugmeleri">
-      <button type="button" class="ana-dugme" id="telegram-kod-al">Kod al</button>
+      <button type="button" class="ana-dugme" id="telegram-kod-al" hidden>Kod al</button>
       <button type="button" class="metin-dugme tehlike" id="telegram-kaldir" hidden>Bağlantıyı kaldır</button>
     </div>
     <details class="gizlilik">

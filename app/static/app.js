@@ -50,7 +50,7 @@ let bekleniyor = false;
 let aktifEkran = adresinEkrani() ?? "sohbet";
 const rapor = raporEkrani({ api, eleman, rol: () => oturum?.rol });
 const bakim = bakimEkrani({ api, eleman });
-telegramPenceresi({ api });
+const telegram = telegramPenceresi({ api });
 const oee = oeeEkrani({
   api,
   eleman,
@@ -122,6 +122,7 @@ function ekraniGoster() {
     }),
   );
   bosDurumuGuncelle();
+  telegram.durumuYenile(); // üst çubukta "Telegram ✓"
   // Rol kısıtlı sekmeler (bakım planı) yalnızca o role görünür; asıl kontrol API'de (403).
   for (const sekme of $("sekmeler").querySelectorAll(".sekme[data-rol]")) {
     sekme.hidden = sekme.dataset.rol !== oturum.rol;

@@ -11,6 +11,7 @@ import psycopg
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from psycopg import sql
 
 from app import sorgular
 from app import telegram_bot as tb
@@ -495,6 +496,86 @@ def test_seed_yeniden_kurulunca_eski_arizalar_bildirilmez(ortam, conn):
     assert bot.son_ariza_id == conn.execute("SELECT max(id) FROM ariza_kayitlari").fetchone()[0]
 
 
+# --- Anlık bildirim: tetikleyici ve bildirim iş parçacığı -----------------------------------
+
+
+@pytest.fixture
+def dinleyici(test_veritabani):
+    """Tetikleyicinin kanalını dinleyen ayrı bir bağlantı."""
+    from scripts.telegram_bot import BILDIRIM_KANALI
+
+    with psycopg.connect(test_veritabani, autocommit=True) as baglanti:
+        baglanti.execute(sql.SQL("LISTEN {}").format(sql.Identifier(BILDIRIM_KANALI)))
+        yield baglanti
+
+
+def _sinyaller(dinleyici, sure=1.0) -> int:
+    return sum(1 for _ in dinleyici.notifies(timeout=sure))
+
+
+def test_ariza_eklenince_ve_hat_durunca_sinyal_gider(conn, dinleyici, yeni_ariza):
+    ariza = yeni_ariza(hat_durdu=False, acik=True)
+    assert _sinyaller(dinleyici) == 1
+    conn.execute("UPDATE ariza_kayitlari SET hat_durdu = true WHERE id = %s", [ariza])
+    assert _sinyaller(dinleyici) == 1
+    # Arızanın kapanması (bitis) bildirim gerektirmez; bot boşuna uyanmasın.
+    conn.execute(
+        "UPDATE ariza_kayitlari SET bitis = baslangic + interval '5 min' WHERE id = %s", [ariza]
+    )
+    assert _sinyaller(dinleyici, sure=0.3) == 0
+
+
+def test_ayni_islemdeki_cok_sayida_ariza_tek_sinyal(conn, dinleyici, yeni_ariza):
+    # Seed yüzlerce arızayı tek işlemde yazar; bot yüzlerce kez uyanmasın.
+    with conn.transaction():
+        for _ in range(5):
+            yeni_ariza()
+    assert _sinyaller(dinleyici) == 1
+
+
+def test_bildirim_dongusu_arizayi_yedek_kontrolu_beklemeden_bildirir(
+    ortam, conn, test_veritabani, yeni_ariza
+):
+    import threading
+    import time
+
+    from scripts import telegram_bot as calistirici
+
+    ortam.bagla(ortam.bot(), "bakim", BAKIM_SOHBETI)
+    # Bildirim botunun bağlantısı baştan kapalı: döngü kendisi yeniden bağlanmalı.
+    kapali = psycopg.connect(test_veritabani)
+    kapali.close()
+    bildirici = tb.Bot(ortam.api, kapali, SahteEmbedder(), lambda: None, simdi=lambda: SABIT_AN)
+    dur = threading.Event()
+    is_parcacigi = threading.Thread(
+        target=calistirici.bildirim_dongusu,
+        args=(bildirici, lambda: psycopg.connect(test_veritabani)),
+        # Yedek kontrol 60 sn: bildirim birkaç saniyede geliyorsa sinyalle gelmiştir.
+        kwargs={"dur": dur, "yedek_aralik": 60},
+        daemon=True,
+    )
+    is_parcacigi.start()
+    try:
+        son = time.monotonic() + 10
+        while bildirici.son_ariza_id is None and time.monotonic() < son:
+            time.sleep(0.02)
+        assert bildirici.son_ariza_id is not None  # başlangıç noktası belirlendi
+        basla = time.monotonic()
+        yeni_ariza()
+        while not ortam.api.mesajlar(BAKIM_SOHBETI)[1:] and time.monotonic() - basla < 5:
+            time.sleep(0.02)
+        gecen = time.monotonic() - basla
+        assert "Pres 3 durdu" in ortam.api.son(BAKIM_SOHBETI)
+        assert gecen < 3, gecen
+    finally:
+        dur.set()
+        conn.execute(sql.SQL("NOTIFY {}").format(sql.Identifier(calistirici.BILDIRIM_KANALI)))
+        is_parcacigi.join(5)
+    assert not is_parcacigi.is_alive()
+    assert bildirici.conn.closed is False  # döngü kendi bağlantısını açtı
+    bildirici.conn.close()
+
+
 # --- Komutlar ------------------------------------------------------------------------------
 
 
@@ -684,16 +765,24 @@ def test_dongu_hatali_mesajda_durmaz_ve_gunluge_icerik_yazmaz(capsys):
         def islenemedi(self, g):
             self.islenen.append(-g["update_id"])
 
-        def bildirimleri_gonder(self):
-            raise psycopg.OperationalError("GIZLI-ICERIK-2")
-
     bot = Bot()
-    # Bildirim hata verse de offset döner: işlenen mesajlar ikinci kez işlenmez.
     assert calistirici.tur(Api(), bot, None) == 9  # hatalı mesaj tekrar alınmaz
     assert bot.islenen == [-7, 8]  # kullanıcıya söylenir, sonraki mesaj yine işlenir
     cikti = capsys.readouterr()
     assert "GIZLI-ICERIK" not in cikti.out + cikti.err
     assert "mesaj 7 işlenemedi: ValueError (test_telegram.py:" in cikti.out
+
+
+def test_bildirim_hatasi_disari_cikmaz_ve_gunluge_icerik_yazmaz(capsys):
+    from scripts import telegram_bot as calistirici
+
+    class Bot:
+        def bildirimleri_gonder(self):
+            raise psycopg.OperationalError("GIZLI-ICERIK")
+
+    calistirici.bildirim_turu(Bot())  # bildirim iş parçacığı ölmesin
+    cikti = capsys.readouterr()
+    assert "GIZLI-ICERIK" not in cikti.out + cikti.err
     assert "bildirimler gönderilemedi: OperationalError" in cikti.out
 
 

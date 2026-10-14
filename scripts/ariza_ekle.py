@@ -5,10 +5,10 @@ Kullanım:
     python scripts/ariza_ekle.py K2-KR1 yazilim orta "Robot pozisyon hatası verdi"
     python scripts/ariza_ekle.py --bitir 4321                      # arızayı şimdi bitir
 
-Gerçek bir fabrikada bu kaydı MES (ör. Verimot) yazar. Bot çalışıyorsa ~10 saniye içinde
-eşleşmiş Telegram hesaplarına bildirim gider. Eklenen arıza bitirilene kadar sürüyor sayılır:
-makine bakım planında ve vardiya raporunda "şu an arızalı" görünür. Demodan sonra --bitir ile
-kapatın.
+Gerçek bir fabrikada bu kaydı MES (ör. Verimot) yazar. Bot çalışıyorsa kayıt anında (veritabanı
+tetikleyicisiyle) eşleşmiş Telegram hesaplarına bildirim gider. Eklenen arıza bitirilene kadar
+sürüyor sayılır: makine bakım planında ve vardiya raporunda "şu an arızalı" görünür. Demodan
+sonra --bitir ile kapatın.
 """
 
 import argparse
