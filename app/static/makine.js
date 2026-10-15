@@ -80,13 +80,15 @@ export function makineEkrani({ api, eleman }) {
   function ciz(v) {
     $("makine-icerik").hidden = false;
     const simdi = Date.now();
-    const aciklar = v.kaynaklar.filter((k) => k.aktif);
+    // Servis hesapları (yalnızca okuyan ERP/MES) olay göndermez; bağlı makine sayılmaz.
+    const olayKaynaklari = v.kaynaklar.filter((k) => k.yetki !== "okuma");
+    const aciklar = olayKaynaklari.filter((k) => k.aktif);
     const sonOlay = v.kaynaklar.map((k) => k.son_olay).filter(Boolean).sort().at(-1);
     $("makine-ozet").replaceChildren(
       ozetKarti(v.aktif_alarmlar.length ? "kirmizi" : "yesil", v.aktif_alarmlar.length ? "▼" : "●",
         "Süren alarm", v.aktif_alarmlar.length,
         v.aktif_alarmlar.length ? `${new Set(v.aktif_alarmlar.map((a) => a.makine_kodu)).size} makinede` : "Bütün makineler çalışıyor"),
-      ozetKarti("yok", "◆", "Bağlı kaynak", `${aciklar.length} / ${v.kaynaklar.length}`, "Açık / toplam"),
+      ozetKarti("yok", "◆", "Bağlı kaynak", `${aciklar.length} / ${olayKaynaklari.length}`, "Açık / toplam"),
       ozetKarti("yok", "◆", "Son olay", sonOlay ? onceMetni(sonOlay, simdi) : "–", sonOlay ? TARIH_SAAT.format(new Date(sonOlay)) : "Henüz olay gelmedi"),
     );
 
@@ -113,11 +115,13 @@ export function makineEkrani({ api, eleman }) {
               const sessiz = k.son_olay && simdi - new Date(k.son_olay).getTime() > SESSIZ_DK * 60000;
               const durumEtiketi = !k.aktif
                 ? isaretli("kirmizi", "✕", "kapalı")
-                : !k.son_olay
-                  ? isaretli("sari", "◆", "hiç olay yok")
-                  : sessiz
-                    ? isaretli("sari", "◆", "sessiz")
-                    : isaretli("yesil", "●", "açık");
+                : k.yetki === "okuma"
+                  ? isaretli("yok", "◆", "servis hesabı · okuma")
+                  : !k.son_olay
+                    ? isaretli("sari", "◆", "hiç olay yok")
+                    : sessiz
+                      ? isaretli("sari", "◆", "sessiz")
+                      : isaretli("yesil", "●", "açık");
               const ad = eleman("span");
               ad.append(eleman("code", null, k.ad), eleman("span", "kucuk soluk blok", k.aciklama));
               return [ad, durumEtiketi, k.katalog ?? "–", k.son_olay ? onceMetni(k.son_olay, simdi) : "–", String(k.aktif_alarm)];

@@ -104,3 +104,30 @@ def istemci(test_veritabani):
         # Varsayılan olarak bakım mühendisi girişi; rol testleri başlığı istek bazında değiştirir.
         with TestClient(uygulama, headers=yetki(BAKIM)) as istemci:
             yield istemci
+
+
+@pytest.fixture
+def kaynaklar(test_veritabani):
+    """Entegrasyon kaynağı üretir: kaynaklar() -> (ad, anahtar). Test bitince kaynaklar ve
+    testte açılan arızalar silinir."""
+    from app import entegrasyon
+
+    conn = psycopg.connect(test_veritabani, autocommit=True)
+    son = conn.execute("SELECT max(id) FROM ariza_kayitlari").fetchone()[0]
+    adlar = []
+
+    def uret(katalog="pres-paneli", yetki="olay"):
+        ad = f"test-bag-{len(adlar)}-{os.urandom(4).hex()}"
+        adlar.append(ad)
+        return ad, entegrasyon.kaynak_ekle(conn, ad, "bağlayıcı testi", katalog=katalog,
+                                           yetki=yetki)  # fmt: skip
+
+    yield uret
+    conn.execute("DELETE FROM entegrasyon_kaynaklari WHERE ad = ANY(%s)", [adlar])
+    conn.execute("DELETE FROM ariza_kayitlari WHERE id > %s", [son])
+    conn.close()
+
+
+@pytest.fixture
+def kaynak(kaynaklar):
+    return kaynaklar()

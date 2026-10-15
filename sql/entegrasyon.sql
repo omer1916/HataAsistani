@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS entegrasyon_kaynaklari (
     olusturma                timestamptz NOT NULL DEFAULT now(),
     son_olay                 timestamptz           -- kaynaktan gelen son istek
 );
+-- olay: alarm gönderir (bağlayıcı, PLC, MES). okuma: servis hesabı (ERP, MES panosu, BI aracı);
+-- API'nin GET uçlarını bakım ekibi gibi okur, hiçbir şey yazamaz, olay gönderemez.
+ALTER TABLE entegrasyon_kaynaklari ADD COLUMN IF NOT EXISTS yetki text NOT NULL DEFAULT 'olay'
+    CHECK (yetki IN ('olay', 'okuma'));
 
 -- Alarm kodlarının anlamı. Desen ya tam koddur ("A101") ya da "*" ile biten bir önektir
 -- ("SV*"); tam eşleşme önektense, uzun önek kısadan önce gelir. Kılavuzda bölümü olan alarm

@@ -77,17 +77,45 @@ services:
     volumes:
       - model-onbellegi:/model-onbellegi
 
+  # Webhook göndericisi: arıza ve bakım olaylarını tanımlı dış sistemlere (ERP, MES, Teams, Slack)
+  # imzalı gönderir. Webhook tanımlı değilse boş bekler. Tanımlamak için:
+  #   docker compose exec api python -m scripts.entegrasyon webhook-ekle AD ADRES
+  webhook:
+    build: .
+    restart: always
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-andon}:${POSTGRES_PASSWORD:-andon}@db:5432/${POSTGRES_DB:-andon}  # secscope: ignore SECRET-DBURL-001 (yalnızca 127.0.0.1 demo veritabanı)
+    command: ["python", "-m", "scripts.webhook_gonderici"]
+    # İmajın sağlık denetimi API'nin portuna bakar; gönderici HTTP sunmaz. Döngünün her turunda
+    # (en geç ~30 sn) nabız dosyasına dokunur; 90 sn dokunmadıysa takılmış ya da veritabanına
+    # ulaşamıyordur.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, sys, tempfile, time; p = os.path.join(tempfile.gettempdir(), 'hata-asistani-webhook.nabiz'); sys.exit(time.time() - os.path.getmtime(p) > 90)"
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 2
+
   # Makine entegrasyonu demosu (isteğe bağlı): docker compose --profile entegrasyon up -d
-  # Pres 3 hattının PLC'si gibi davranan OPC UA sunucusu ve onu dinleyip API'ye alarm gönderen
-  # bağlayıcı. .env'de SIMULATOR_ANAHTARI gerekir: API açılışta "simulator" kaynağını bu
-  # anahtarla kurar, bağlayıcı aynı anahtarla gönderir. Alarm vermek için:
+  # Pres 3 hattının PLC'si gibi davranan simülatör (OPC UA, Modbus TCP, MQTT ve MTConnect'i birden
+  # konuşur) ve onu dinleyip API'ye alarm gönderen bağlayıcı. .env'de SIMULATOR_ANAHTARI gerekir:
+  # API açılışta "simulator" kaynağını bu anahtarla kurar, bağlayıcı aynı anahtarla gönderir.
+  # Alarm vermek için:
   #   docker compose exec plc-simulatoru python -m entegrasyon.simulator alarm P3-HP A101
   plc-simulatoru:
     build:
       context: .
       dockerfile: Dockerfile.entegrasyon
     profiles: [entegrasyon]
-    command: ["python", "-m", "entegrasyon.simulator", "sunucu"]
+    # İç ağda: OPC UA 4840, Modbus 5020, MQTT 1883, MTConnect 5000.
+    command: ["python", "-m", "entegrasyon.simulator", "sunucu", "--hepsi"]
     restart: always
     # Bilgisayardaki bir OPC UA istemcisiyle (ör. UaExpert) bakılabilsin; yalnızca bu makineden.
     ports:
@@ -105,13 +133,18 @@ services:
         condition: service_started
     environment:
       HATA_ASISTANI_ADRESI: http://api:8000
-      OPCUA_ADRESI: opc.tcp://plc-simulatoru:4840/hata-asistani/
+      # Protokol adresten seçilir; .env'de KAYNAK_ADRESI ile değiştirilebilir:
+      #   modbus://plc-simulatoru:5020   (bit haritası: MODBUS_HARITASI)
+      #   mqtt://plc-simulatoru:1883/hata-asistani
+      #   http://plc-simulatoru:5000     (MTConnect)
+      KAYNAK_ADRESI: ${KAYNAK_ADRESI:-opc.tcp://plc-simulatoru:4840/hata-asistani/}
+      MODBUS_HARITASI: /uygulama/entegrasyon/pres3-modbus-haritasi.json
       # Boşsa bağlayıcı açıklayıcı bir mesajla çıkar (zorunlu değişken compose'u bütünüyle bozardı).
       ENTEGRASYON_ANAHTARI: ${SIMULATOR_ANAHTARI:-}
       KUYRUK_DOSYASI: /veri/kuyruk.sqlite
       NABIZ_DOSYASI: /tmp/baglayici.nabiz
     restart: always
-    # Nabız, OPC UA bağlantısı canlıyken en geç birkaç saniyede bir güncellenir; PLC'ye
+    # Nabız, makine bağlantısı canlıyken en geç birkaç saniyede bir güncellenir; PLC'ye
     # ulaşılamıyorsa konteyner "unhealthy" görünür.
     healthcheck:
       test:

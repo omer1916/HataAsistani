@@ -7,6 +7,10 @@
 Yetki arama sorgusunun içinde uygulanır (`WHERE d.erisim = ANY(...)`). Operatörün
 göremeyeceği bir parça veritabanından hiç gelmez, dolayısıyla LLM'e de ulaşmaz. Erişim listesi
 token'daki rolden gelir; LLM'in araç argümanlarıyla değiştirilemez.
+
+Servis hesabı (ERP, MES panosu, BI aracı): token yerine X-API-Anahtari başlığıyla, "okuma"
+yetkili bir entegrasyon kaynağının anahtarı. Bakım rolü gibi okur ama yalnızca GET: yazan,
+LLM'e soran ya da silen her istek 403 alır. Olay gönderen (bağlayıcı) anahtarı burada geçmez.
 """
 
 import secrets
@@ -15,10 +19,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
 import jwt
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends, HTTPException, Request, Security, status
+from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from pwdlib import PasswordHash
 
+from app import entegrasyon
 from app.ayarlar import ayarlar
 
 Rol = Literal["operator", "bakim"]
@@ -42,6 +47,7 @@ class Kullanici:
     kullanici_adi: str
     ad_soyad: str
     rol: Rol
+    servis: bool = False  # servis hesabı: yalnızca okur
 
     @property
     def erisim(self) -> tuple[str, ...]:
@@ -88,18 +94,44 @@ def token_coz(token: str) -> Kullanici:
     return Kullanici(veri["sub"], veri.get("ad", veri["sub"]), veri["rol"])
 
 
-oauth2_semasi = OAuth2PasswordBearer(tokenUrl="giris")
+oauth2_semasi = OAuth2PasswordBearer(tokenUrl="giris", auto_error=False)
+servis_anahtari = APIKeyHeader(
+    name="X-API-Anahtari",
+    scheme_name="ServisAnahtari",
+    auto_error=False,
+    description="Servis hesabının (okuma yetkili kaynak) anahtarı; yalnızca GET istekleri",
+)
+OKUMA_YONTEMLERI = ("GET", "HEAD")
 
 
-def aktif_kullanici(token: Annotated[str, Depends(oauth2_semasi)]) -> Kullanici:
-    try:
-        return token_coz(token)
-    except jwt.InvalidTokenError:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            "Oturum geçersiz ya da süresi dolmuş; yeniden giriş yapın.",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from None
+def _yetkisiz() -> HTTPException:
+    return HTTPException(
+        status.HTTP_401_UNAUTHORIZED,
+        "Oturum geçersiz ya da süresi dolmuş; yeniden giriş yapın.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def aktif_kullanici(
+    request: Request,
+    token: Annotated[str | None, Depends(oauth2_semasi)],
+    anahtar: Annotated[str | None, Security(servis_anahtari)],
+) -> Kullanici:
+    if token:
+        try:
+            return token_coz(token)
+        except jwt.InvalidTokenError:
+            raise _yetkisiz() from None
+    if anahtar:
+        with request.app.state.havuz.connection() as conn:
+            kaynak = entegrasyon.kaynak_bul(conn, anahtar)
+        if kaynak is not None and kaynak.yetki == "okuma":
+            if request.method not in OKUMA_YONTEMLERI:
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN, "Servis hesabı yalnızca okuyabilir (GET)."
+                )
+            return Kullanici(f"servis:{kaynak.ad}", f"Servis hesabı {kaynak.ad}", "bakim", True)
+    raise _yetkisiz()
 
 
 AktifKullanici = Annotated[Kullanici, Depends(aktif_kullanici)]

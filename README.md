@@ -46,8 +46,10 @@ açılır ve sıradaki tarih kendiliğinden kayar. Asistana "hangi bakımlar gec
 bakımı ne zaman?" diye sorulabilir; bakım ekibine her sabah Telegram'dan liste gider.
 
 **Makine entegrasyonu** bir PLC ya da CNC alarm verdiğinde arızayı kimse yazmadan açar ve alarm
-bitince kapatır; bildirim saniyeler içinde Telegram'a gider. Makineler OPC UA ile bağlanır, başka
-sistemler aynı API'ye olay gönderir. Ayrıntılar: [Makine entegrasyonu](#makine-entegrasyonu).
+bitince kapatır; bildirim saniyeler içinde Telegram'a gider. Makineler OPC UA, Modbus TCP, MQTT ya
+da MTConnect ile bağlanır, başka sistemler aynı API'ye olay gönderir. Arıza ve bakım olayları
+ERP'ye, MES'e, Teams ve Slack kanallarına imzalı webhook olarak gider; ERP panosu gibi yalnızca
+okuyan sistemler servis hesabıyla bağlanır. Ayrıntılar: [Makine entegrasyonu](#makine-entegrasyonu).
 
 **Telegram botu** (isteğe bağlı) hat durduğunda bakım ekibine kılavuzdaki ilk adım ve yedek
 parça durumuyla anında bildirim gönderir; sahadan soru sormayı ve fotoğrafla bakım talebi
@@ -111,8 +113,9 @@ http://localhost:8000/docs adresindedir.
 | Güvenlik | JWT (PyJWT), argon2 (pwdlib) |
 | Arayüz | HTML, CSS, vanilla JavaScript (dış bağımlılık yok) |
 | Telegram | Bot API, httpx ile ince istemci, uzun yoklama (dışarıya açık adres gerekmez) |
-| Makine entegrasyonu | OPC UA (asyncua), PostgreSQL LISTEN/NOTIFY, SQLite kuyruklu bağlayıcı |
-| Kalite | pytest (2812 test), Hypothesis, ruff, GitHub Actions |
+| Makine entegrasyonu | OPC UA (asyncua), Modbus TCP (pymodbus), MQTT (aiomqtt), MTConnect; PostgreSQL LISTEN/NOTIFY, SQLite kuyruklu bağlayıcı |
+| Dış sistemler | HMAC-SHA256 imzalı webhook (giden kutusu, `FOR UPDATE SKIP LOCKED`), Teams ve Slack biçimi, salt okunur servis hesabı |
+| Kalite | pytest (3116 test), Hypothesis, ruff, GitHub Actions |
 | Çalıştırma | Docker Compose |
 
 ## Telegram botu
@@ -295,15 +298,20 @@ Bir makine (PLC, CNC) alarm verdiğinde Hata Asistanı bunu kimse yazmadan arız
 Telegram bildirimi anında gider, kılavuzdaki ilgili bölüm ve stok mesaja eklenir, arıza
 raporlara, OEE'ye ve bakım planına girer, **Makineler** ekranında canlı görünür. Alarm bitince
 arıza kendiliğinden kapanır. Hata Asistanı belirli bir markaya ya da protokole bağlı değildir:
-her sistem aynı kapıdan, aynı biçimde olay gönderir.
+bağlayıcı fabrikadaki dört yaygın dili konuşur, onları konuşmayan her sistem de aynı kapıdan
+olay gönderir. Arıza ve bakım olayları dışarıya, ERP'ye, MES'e ve Teams/Slack kanallarına imzalı
+webhook olarak gider; ERP panosu gibi yalnızca okuyan sistemler servis hesabıyla bağlanır.
 
 ```mermaid
 flowchart LR
-    PLC["PLC / CNC<br/>(OPC UA)"] -->|"alarm değişimi"| BAG["Bağlayıcı<br/>entegrasyon/<br/>diskteki kuyruk"]
+    PLC["PLC / CNC / IoT<br/>OPC UA · Modbus TCP<br/>MQTT · MTConnect"] -->|"alarm değişimi"| BAG["Bağlayıcı<br/>entegrasyon/<br/>diskteki kuyruk"]
     BAG -->|"POST /entegrasyon/olaylar<br/>X-API-Anahtari"| API["Hata Asistanı API"]
-    MES["MES / ERP / başka sistem"] -->|"aynı uç nokta"| API
+    MES["MES / başka sistem"] -->|"aynı uç nokta"| API
     API -->|"arıza aç · ekle · kapat"| PG[("PostgreSQL")]
-    PG -->|"NOTIFY (tetikleyici)"| BOT["Telegram botu"]
+    PG -->|"NOTIFY"| BOT["Telegram botu"]
+    PG -->|"giden kutusu + NOTIFY"| WH["Webhook göndericisi"]
+    WH -->|"HMAC imzalı POST"| ERP["ERP · MES · Teams · Slack"]
+    PANO["ERP panosu, BI aracı"] -->|"servis hesabı, yalnızca GET"| API
     PG --> EKRAN["Makineler ekranı<br/>raporlar · bakım planı"]
 ```
 
@@ -327,6 +335,25 @@ Hazır katalog `pres-paneli`: pres operatör panelinin A101-A501 kodları, PRES-
 ve bölümlerinin sayfasıyla (A101 → s. 5 "Hidrolik basınç düşüklüğü"). Telegram mesajındaki kılavuz
 alıntısı bu kodla bulunur.
 
+### Protokoller
+
+Bağlayıcı protokolü adresten seçer (`KAYNAK_ADRESI`); hepsinin davranışı aynıdır (yeniden bağlanma,
+diskteki kuyruk, uzlaşma; `entegrasyon/izleyici.py`).
+
+| Protokol | Kimler konuşur | Adres | Alarmlar nasıl bulunur |
+|---|---|---|---|
+| OPC UA | Siemens S7-1500, Beckhoff, Fanuc OPC UA seçeneği, Kepware, Node-RED | `opc.tcp://plc:4840/...` | `Objects/<makine>/Alarmlar/<kod>` (bool); bağlanınca kendiliğinden bulunur, abonelikle anında gelir |
+| Modbus TCP | Basit PLC'ler, eski tezgâhlar, uzak G/Ç modülleri | `modbus://plc:502` | Bit haritası (`MODBUS_HARITASI`, JSON): hangi bobin ya da ayrık giriş hangi makinenin hangi alarmı; 0,2 sn'de bir yoklanır |
+| MQTT | IoT sensörleri, Raspberry Pi, Node-RED, ağ geçitleri | `mqtt://kullanici:parola@broker:1883/önek` (TLS: `mqtts://`) | Konu `<önek>/<makine>/alarm/<kod>`, içerik `1`/`0` ya da `{"aktif": true, "zaman": "..."}`; retained mesajla bağlanınca son durum bilinir |
+| MTConnect | CNC'ler: Haas, Mazak, Okuma; Fanuc ve Siemens adaptörle | `http://ajan:5000?cihaz=VMC-3Axis:P3-HP` | Ajanın `/current` cevabındaki Fault (istenirse Warning) koşulları; kod `nativeCode` |
+
+Protokole özgü korumalar: Modbus'ta okuma hatası ya da cevap vermeyen PLC alarmı "bitti" saymaz,
+bağlantıyı yeniler. MQTT'de bozuk konu ya da içerik (yanlış kod, anlaşılmayan değer, 1 KB'tan uzun,
+UTF-8 olmayan) günlüğe yazılıp yok sayılır, bağlantı kopmaz. MTConnect'te 5 MB'tan büyük, bozuk ya
+da zararlı XML (milyar kahkaha, dış varlık) reddedilir, yönlendirme izlenmez, cevabı damla damla
+veren ajan zaman aşımına uğrar; ajan makineye ulaşamadığında (bütün koşullar `Unavailable`) süren
+alarmlar kapatılmaz. Günlüğe parola yazılmaz (`mqtt://ali:***@...`).
+
 ### Gerçek bir makineyi bağlamak
 
 1. Kaynak ekleyip anahtarını al (anahtar bir kez gösterilir, veritabanında özeti saklanır):
@@ -334,13 +361,12 @@ alıntısı bu kodla bulunur.
    python -m scripts.entegrasyon kaynak-ekle cnc-01 "Fanuc 0i torna" --katalog fanuc
    python -m scripts.entegrasyon katalog-ekle fanuc "SV*" "Servo alarmı" elektrik yuksek
    ```
-2. Makinenin OPC UA sunucusunda (Siemens S7-1500, Beckhoff, Fanuc OPC UA seçeneği) ya da bir ağ
-   geçidinde (Kepware, Node-RED) alarmları `Objects/<makine kodu>/Alarmlar/<alarm kodu>` (bool)
-   olarak yayınla. Bağlayıcı makineleri ve alarmları bağlanınca kendisi bulur.
-3. Bağlayıcıyı makinelerin ağında çalıştır (`Dockerfile.entegrasyon`, yalnızca asyncua ve httpx):
-   `ENTEGRASYON_ANAHTARI`, `OPCUA_ADRESI`, `HATA_ASISTANI_ADRESI` ortam değişkenleriyle
-   `python -m entegrasyon.baglayici`. Bağlayıcı makineye yalnızca okumak için bağlanır.
-4. OPC UA konuşmayan sistemler (MES, MTConnect, Modbus, MQTT ağ geçidi) aynı uç noktaya doğrudan
+2. Bağlayıcıyı makinelerin ağında çalıştır (`Dockerfile.entegrasyon`; Hata Asistanı'nın koduna
+   bağımlı değil): `ENTEGRASYON_ANAHTARI`, `KAYNAK_ADRESI`, `HATA_ASISTANI_ADRESI` (Modbus'ta
+   ayrıca `MODBUS_HARITASI`) ortam değişkenleriyle `python -m entegrasyon.baglayici`. Bağlayıcı
+   makineye yalnızca okumak için bağlanır. Hatalı adreste anlaşılır bir mesajla çıkar.
+   Modbus haritası örneği: `entegrasyon/pres3-modbus-haritasi.json`.
+3. Bu dört protokolü de konuşmayan sistemler (MES, kendi yazılımınız) aynı uç noktaya doğrudan
    gönderebilir:
    ```bash
    curl -X POST http://127.0.0.1:8000/entegrasyon/olaylar -H "X-API-Anahtari: ha_..." \
@@ -354,36 +380,98 @@ alıntısı bu kodla bulunur.
 **Bağlayıcının garantileri** (`entegrasyon/`): olaylar SQLite kuyruğunda bekler ve ancak API kabul
 edince silinir; API kapalıyken de bağlayıcı yeniden başladığında da kaybolmaz (en az bir kez
 teslim, API tarafında tam bir kez etki). Ağ hatası ve 5xx'te artan aralıklarla, 429'da API'nin
-istediği kadar bekler; tek tek reddedilen bozuk olayı günlüğe yazıp atar (kuyruk tıkanmaz). OPC UA
-bağlantısı koparsa yeniden bağlanır; bağlanınca süren alarmları bildirir ve API'deki süren
-alarmlarla uzlaşır: bağlantı yokken biten alarm için "bitti" gönderir.
+istediği kadar bekler; tek tek reddedilen bozuk olayı günlüğe yazıp atar (kuyruk tıkanmaz).
+Makine bağlantısı koparsa yeniden bağlanır: kopukken biten alarm için "bitti" gönderir, kopukken
+süren alarmı yeniden göndermez; bağlayıcı yeniden başlayınca süren alarmları bildirir ve API'deki
+süren alarmlarla uzlaşır.
+
+### Webhook'lar: ERP, MES, Teams, Slack
+
+Arıza açıldı, kapandı, sonradan hattı durdurdu ve periyodik bakım yapıldı olayları tanımlı dış
+sistemlere gider. Bildirim, arızayı değiştiren veritabanı işleminin içinde giden kutusuna yazılır
+(`sql/webhook.sql`, outbox): işlem geri alınırsa bildirim de yoktur, işlem tamamlandıysa bildirim
+kaybolmaz. Gönderici (`scripts/webhook_gonderici.py`, compose'da `webhook` servisi) tetikleyicinin
+sinyaliyle hemen uyanır.
+
+```bash
+python -m scripts.entegrasyon webhook-ekle erp https://erp.local/hata-asistani
+python -m scripts.entegrasyon webhook-ekle bakim-kanali https://...webhook... --bicim teams \
+    --olay ariza_acildi --olay hat_durdu
+python -m scripts.entegrasyon webhook-dene erp
+python -m scripts.entegrasyon webhooklar        # gönderilen, bekleyen, vazgeçilen, son hata
+```
+
+- `json` biçiminde istek HMAC-SHA256 ile imzalıdır: `X-Hata-Asistani-Imza: sha256=<imza>`, imzalanan
+  metin `<X-Hata-Asistani-Zaman>.<gövde>`. Alıcı imzayı ve zamanı (5 dakika) doğrular; eski isteği
+  tekrar oynatmak işe yaramaz. Örnek doğrulama: `app/webhook.py` `imza_dogrula`.
+- En az bir kez teslim: `X-Hata-Asistani-Teslimat` bildirim numarasıdır, alıcı tekrarı onunla
+  ayıklar. Her webhook'un bildirimleri kendi sırasıyla gider; biri cevap vermezse diğerleri
+  beklemez. Ulaşılamayan alıcıya 5 sn'den 1 saate artan aralıklarla yaklaşık 4,5 saat denenir,
+  sonra bırakılır (`webhooklar` gösterir). İki gönderici çalışsa da aynı bildirim iki kez gitmez
+  (`FOR UPDATE SKIP LOCKED`).
+- `teams` (Workflows gelen webhook'u, Adaptive Card) ve `slack` biçimleri kanala okunur bir satır
+  yazar: "Arıza açıldı: P3-HP Hidrolik Pres (Pres 3) · önem yüksek · hat durdu · A101 ...".
+- Seed yeniden çalışınca binlerce geçmiş arıza bildirim olmaz (tetikleyiciler veriden sonra
+  kurulur); webhook tanımları seed'den sonra da kalır.
+
+### Servis hesabı: yalnızca okuyan sistemler
+
+ERP panosu, MES ya da bir BI aracı Hata Asistanı'nın verisini kullanıcı parolası olmadan okuyabilir:
+
+```bash
+python -m scripts.entegrasyon kaynak-ekle erp-okuma "ERP panosu" --yalnizca-okuma
+curl http://127.0.0.1:8000/arizalar?hat=Pres%203 -H "X-API-Anahtari: ha_..."
+```
+
+Servis hesabı bakım rolü gibi okur (arızalar, OEE, periyodik bakım, entegrasyon durumu) ama
+yalnızca GET: yazan, LLM'e soran ya da silen her istek 403 alır, olay gönderemez. Olay gönderen
+(bağlayıcı) anahtarı kullanıcı uç noktalarında geçmez. İstekte geçersiz bir token varsa anahtara
+bakılmaz (401). Hesap `kapat` ile kapatılır, `anahtar-yenile` ile eski anahtar geçersiz olur.
 
 **Güvenlik:** kaynak başına anahtar (özeti saklanır, kapatılabilir, yenilenebilir); kullanıcı
 token'ı olay gönderemez, kaynak anahtarı kullanıcı uç noktalarını açamaz. Kaynak başına hız
 sınırı (saniyede 200 olay, alarm fırtınası API'yi ve botu boğmasın) ve 1 MB gövde sınırı (aşan
-istek uygulamaya ulaşmadan reddedilir). Demo simülatörü şifresizdir; gerçek kurulumda OPC UA
-sertifikalı ve şifreli (Basic256Sha256) çalıştırılır.
+istek uygulamaya ulaşmadan reddedilir). Webhook adresini yalnızca yönetici komut satırından
+ekler; gönderici yönlendirme izlemez. Demo simülatörü şifresizdir; gerçek kurulumda OPC UA
+sertifikalı ve şifreli (Basic256Sha256), MQTT TLS ve parolalı çalıştırılır.
 
 ### Nasıl test edildi
 
 Varsayılan test takımı her CI'da çalışır; `HA_YOGUN=1` aynı testleri büyütür. Yoğun turun sonucu
-(30 dk 41 sn, 210 testin hepsi geçti):
+(YOGUN_SURE, YOGUN_ADET testin hepsi geçti):
 
 | Test | Ne yapıldı | Sonuç |
 |---|---|---|
 | Durum makinesi | 2.279 rastgele olay dizisi, toplam **128.533 olay** (başla, bitir, aynı olayı yeniden gönder, bitişi önce gönder, arızayı elle kapat; zamanlar 60 sn sınırının çevresinde). Her adımda veritabanı, kuralları saf Python'la yeniden yazan bağımsız modelle alan alan karşılaştırıldı | Fark yok |
 | Eşzamanlılık | 40 tur × 3 senaryo: aynı alarm, farklı alarmlar ve aynı olay kimliği 8 iş parçacığından aynı anda; 12 iş parçacığıyla 6.000 olay, üçte biri yeniden gönderildi | Çift arıza, kayıp ya da yarım kalmış olay yok |
 | Bozuk girdi | 3.000 rastgele JSON gövdesi; NaN, Infinity, eşi olmayan vekil karakter, kapanmamış JSON, 10.000 düzey iç içe gövde | Hiç 500 yok |
-| Uçtan uca | Gerçek OPC UA sunucusu, bağlayıcı ve API; 6 tohum × 3.000 alarm değişimi milisaniyeler arayla | Her seferinde veritabanındaki süren alarmlar PLC'dekiyle aynı; bağlayıcı yeniden başlayınca hiçbir şey değişmedi |
+| Dört protokol uçtan uca | Her senaryo OPC UA, Modbus, MQTT ve MTConnect için ayrı ayrı (15 senaryo × 4): alarm açma-kapama, bağlayıcı yokken başlayan ve biten alarm, PLC'nin kapanıp açılması, PLC hiç yokken başlama, API kesintisi (ağ yok, 503, 500), kalıcı kuyruk; 4 tohum × 3.000 alarm değişimi milisaniyeler arayla | Her seferinde veritabanındaki süren alarmlar PLC'dekiyle aynı; bağlayıcı yeniden başlayınca hiçbir arıza değişmedi |
+| Aynı PLC, dört protokol | Tek simülatör dördünü birden konuşur; dört bağlayıcı aynı anda, 3 tohum × 2.000 değişim; Modbus'tan yazılan bobin diğer üç protokolden görünür | Dört kaynağın süren alarmları birbiriyle ve PLC'yle aynı |
+| Protokol fuzz | Modbus haritası, MQTT konu ve içeriği, MTConnect XML'i (ad alanlı rastgele ağaçlar, yarıda kesilmiş belgeler, rastgele baytlar) her biri 3.000 örnek; Modbus sunucusuna 3.000 bağlantıda rastgele çerçeve | Yalnızca anlaşılır ValueError; sunucu hiç hata fırlatmadı, her cevabı geçerli Modbus çerçevesi |
+| Webhook | 40 rastgele arıza işlem dizisi bağımsız modelle karşılaştırıldı; 4 gönderici aynı anda 3 alıcıya 1.200 bildirim; her HTTP hatası, zaman aşımı, yönlendirme, kapanan alıcı; gerçek HTTP alıcısına uçtan uca | Her bildirim bir kez ve sırasıyla; imza doğrulandı |
 
-Bozuk girdi testi gerçek bir hata buldu: JSON'daki eşi olmayan vekil karakter (`"\ud800"`)
-FastAPI'nin 422 cevabında girdiyi geri yazdığı için cevap UTF-8'e çevrilemiyor, bütün uç noktalar
-500 dönüyordu. 422 cevabı artık karakteri temizleyerek yazıyor.
+Testlerin bulduğu gerçek hatalar:
+
+- JSON'daki eşi olmayan vekil karakter (`"\ud800"`) FastAPI'nin 422 cevabında girdiyi geri yazdığı
+  için cevap UTF-8'e çevrilemiyor, bütün uç noktalar 500 dönüyordu. 422 cevabı artık karakteri
+  temizleyerek yazıyor.
+- Simülatörün Modbus sunucusu bir istemci bağlıyken kapanamıyordu (Python 3.12'de `wait_closed`
+  açık bağlantıları bekler); `docker stop` 10 sn bekleyip süreci öldürürdü.
+- Modbus bağlantısı her yenilendiğinde süren alarm yeniden gönderiliyor, zaman damgası olmadığı
+  için her seferinde yeni bir olay kaydı açılıyordu; MQTT'de kopukken biten alarm bir sonraki
+  yeniden bağlanmaya kadar açık kalabiliyordu. Kural sadeleşti: olay yalnızca değer bilinen son
+  değerden farklıysa üretilir.
+- MTConnect cevabında bilinmeyen bir kodlama (`encoding="bogus"`) "bozuk XML" yerine başka bir
+  hata türü fırlatıyordu; MQTT adresindeki `#` joker değil URL parçası sayılıp yok sayılıyordu;
+  geçerli şemalı ama hatalı adres (`http://ajan?aralik=0`) bağlayıcıyı anlaşılır mesaj yerine
+  traceback ile çökertiyor, `restart: always` ile döngüye sokuyordu.
 
 ### Demo: PLC simülatörü
 
-`entegrasyon/simulator.py`, Pres 3 hattının PLC'si gibi davranan bir OPC UA sunucusudur
-(P3-HP'nin sekiz, P3-RB ve P3-TR'nin birer alarmı).
+`entegrasyon/simulator.py`, Pres 3 hattının PLC'si gibi davranır (P3-HP'nin sekiz, P3-RB ve
+P3-TR'nin birer alarmı) ve dört protokolü birden konuşur: OPC UA (4840), Modbus TCP (5020), MQTT
+(1883) ve MTConnect (5000). Durum tektir: OPC UA'dan verilen alarm Modbus bitinde, MQTT konusunda
+ve MTConnect ajanında da görünür.
 
 ```bash
 # .env'e bir kez: SIMULATOR_ANAHTARI=ha_... (bkz. .env.example)
@@ -393,7 +481,9 @@ docker compose exec plc-simulatoru python -m entegrasyon.simulator alarm P3-HP A
 ```
 
 Alarmdan saniyeler içinde Telegram'a "Pres 3 durdu" mesajı düşer, Makineler ekranında görünür;
-`--bitir` ile arıza kapanır.
+`--bitir` ile arıza kapanır. Bağlayıcıyı başka protokolle denemek için `.env`'e
+`KAYNAK_ADRESI=modbus://plc-simulatoru:5020` (ya da `mqtt://plc-simulatoru:1883/hata-asistani`,
+`http://plc-simulatoru:5000`) yazıp `docker compose --profile entegrasyon up -d baglayici`.
 
 ## Tasarım kararları
 
@@ -623,7 +713,7 @@ Kontroller ve testler:
 
 ```bash
 ruff check . && ruff format --check .
-pytest                                  # 2812 test (~3 dk); veritabanı kapalıysa DB testleri atlanır
+pytest                                  # 3116 test (~6 dk); veritabanı kapalıysa DB testleri atlanır
 ```
 
 Testler gerçek bir PostgreSQL'e karşı çalışır: `andon_test` veritabanı sabit bir tarihle üretilen
@@ -736,6 +826,7 @@ app/
   bakim_plani.py makine riskleri ve haftalık bakım planı
   periyodik.py   periyodik bakım takibi: son/sıradaki bakım, durum, "Yapıldı" kaydı
   entegrasyon.py makine alarmlarını arızaya çevirir: kurallar, katalog, anahtarlar, hız sınırı
+  webhook.py     dış sistemlere bildirim: imza, biçimler, sıralı ve yeniden denenen gönderim
   telegram_bot.py  Telegram botu: eşleştirme, soru, fotoğraflı talep, bildirim, komutlar
   telegram_api.py  Telegram Bot API istemcisi (token'ı hatalara sızdırmaz)
   tools.py       agent araçları ve JSON şemaları
@@ -745,22 +836,27 @@ app/
   auth.py        JWT, roller, parola hash'i
   sorgular.py    SQL sorguları
   static/        sohbet, OEE paneli, vardiya raporu, bakım planı, periyodik bakım ve makine ekranları
-entegrasyon/     makine bağlayıcısı (API'den ayrı süreç; yalnızca asyncua ve httpx)
-  baglayici.py   çalıştırır: OPC UA alarmlarını izler, API'ye gönderir
-  opcua.py       alarm değişimlerini izler, yeniden bağlanır, API'yle uzlaşır
+entegrasyon/     makine bağlayıcısı (API'den ayrı süreç; httpx ve protokol kütüphaneleri)
+  baglayici.py   çalıştırır: protokolü adresten seçer, alarmları izler, API'ye gönderir
+  izleyici.py    bütün protokollerin ortak kısmı: olay, yeniden bağlanma, API'yle uzlaşma
+  opcua.py       OPC UA (abonelik)
+  modbus.py      Modbus TCP (bit haritasıyla yoklama) ve simülatörün Modbus sunucusu
+  mqtt.py        MQTT (konu kuralı, bozuk mesaj koruması)
+  mtconnect.py   MTConnect (ajan yoklama, XML denetimi) ve simülatörün küçük ajanı
   gonderici.py   kuyruğu API'ye sırayla, yeniden deneyerek boşaltır
   kuyruk.py      gönderilmeyi bekleyen olaylar (SQLite, kalıcı)
-  simulator.py   Pres 3 PLC simülatörü (OPC UA sunucusu) ve alarm verme komutu
+  simulator.py   Pres 3 PLC simülatörü (dört protokol) ve alarm verme komutu
 scripts/         seed, ingest, kılavuz PDF üretimi, ölçüm ve değerlendirme
   telegram_bot.py    botu çalıştırır (uzun yoklama)
   telegram_prova.py  token olmadan uçtan uca prova (sahte Telegram sunucusu)
   ariza_ekle.py      bildirim denemesi için hattı durduran bir arıza ekler ve bitirir
-  entegrasyon.py     kaynak ekler, anahtar verir, alarm kataloğunu düzenler
+  entegrasyon.py     kaynak ve servis hesabı ekler, anahtar verir, katalog ve webhook düzenler
+  webhook_gonderici.py  giden kutusundaki bildirimleri gönderir (compose'da webhook servisi)
 sql/             şema ve referans sorgular
 data/kilavuzlar/ kurgusal kılavuzlar (Markdown kaynak + PDF)
 eval/            arama ve agent değerlendirme setleri
 sunum/           tanıtım PDF'i (Hata-Asistani-Tanitim.pdf) ve onu üreten betikler
-tests/           2812 test
+tests/           3116 test
 ```
 
 Tanıtım PDF'indeki ekran görüntüleri çalışan uygulamadan alınır:
@@ -769,13 +865,17 @@ Chrome'u kullanır), ardından `python sunum/pdf_olustur.py`.
 
 ## Bilinen eksikler
 
-- **Makine entegrasyonunda yalnızca OPC UA bağlayıcısı var.** MTConnect, Modbus ve MQTT için
-  bağlayıcı modülü yazılmalı (API ve kurallar hazır; bu sistemler şimdilik bir ağ geçidiyle OPC
-  UA'ya çevrilebilir ya da doğrudan API'ye gönderebilir). Olaylar kaynak başına sırayla gelmeli
-  (bağlayıcı bunu sağlar); sıra karışmasında yalnızca aynı alarmın bitişinin önce gelmesi
-  desteklenir. OPC UA aboneliği 100 ms aralıkla örnekler: daha kısa süren bir alarm hiç
-  görünmeyebilir (son durum yine doğrudur). Hız sınırı API sürecinin belleğinde tutulur (tek
-  süreç varsayımı).
+- **Makine entegrasyonu gerçek bir makinede denenmedi.** Dört protokol simülatörle ve
+  protokol kütüphanelerinin kendi istemcileriyle sınandı; sahadaki cihazların tuhaflıkları
+  (zaman damgasız OPC UA sunucusu, Modbus'ta 1'den başlayan adresler, adaptörün koşul adları)
+  ilk kurulumda görülecek. Olaylar kaynak başına sırayla gelmeli (bağlayıcı bunu sağlar); sıra
+  karışmasında yalnızca aynı alarmın bitişinin önce gelmesi desteklenir. OPC UA aboneliği ve
+  Modbus/MTConnect yoklaması kısa aralıklıdır: daha kısa süren bir alarm hiç görünmeyebilir (son
+  durum yine doğrudur). Modbus olay zamanı okuma anıdır (protokol zaman damgası taşımaz). Hız
+  sınırı API sürecinin belleğinde tutulur (tek süreç varsayımı).
+- **Webhook alıcısı için arayüz yok.** Webhook'lar ve servis hesapları komut satırından yönetilir;
+  gönderim geçmişi `webhooklar` komutunda. Webhook gizli anahtarı veritabanında düz saklanır
+  (imzayı üretmek için gerekir); veritabanına erişen onu da görür.
 
 - **Telegram botu soruları tek iş parçacığında cevaplıyor.** LLM bir soruyu cevaplarken (2-4 sn)
   diğer mesajlar sırada bekler (arıza bildirimi ayrı iş parçacığında, beklemez); birkaç kişilik bir ekip için yeterli, büyük bir fabrika için iş kuyruğu

@@ -28,7 +28,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "asyncua>=2.1,<3",  # makine bağlayıcısı ve PLC simülatörü (entegrasyon/); testleri için
+    # Makine bağlayıcısı ve PLC simülatörü (entegrasyon/); testleri için. Docker'da
+    # Dockerfile.entegrasyon aynılarını kurar.
+    "aiomqtt>=2.3,<3",  # MQTT
+    "amqtt>=0.12,<1",  # simülatörün MQTT aracısı
+    "asyncua>=2.1,<3",  # OPC UA
+    "pymodbus>=3.10,<4",  # Modbus TCP istemcisi
     "fpdf2>=2.8",  # sahte kılavuzların PDF'lerini üretmek için
     "httpx2",  # FastAPI TestClient için
     "hypothesis>=6",  # özellik tabanlı testler

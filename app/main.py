@@ -382,6 +382,17 @@ def kaynak_dogrula(
 EntegrasyonKaynagi = Annotated[entegrasyon.Kaynak, Depends(kaynak_dogrula)]
 
 
+def olay_kaynagi(kaynak: EntegrasyonKaynagi) -> entegrasyon.Kaynak:
+    if kaynak.yetki != "olay":
+        raise HTTPException(
+            403, "Bu anahtar yalnızca okuma yetkili (servis hesabı); olay gönderemez."
+        )
+    return kaynak
+
+
+OlayKaynagi = Annotated[entegrasyon.Kaynak, Depends(olay_kaynagi)]
+
+
 def _gecersiz_olay(sira: int, ham, hata: ValidationError) -> EntegrasyonSonucu:
     olay_id = ham.get("olay_id") if isinstance(ham, dict) else None
     ilk = hata.errors()[0]
@@ -402,6 +413,7 @@ def _gecersiz_olay(sira: int, ham, hata: ValidationError) -> EntegrasyonSonucu:
     response_model=EntegrasyonCevabi,
     responses={
         401: {"description": "Anahtar yok, yanlış ya da kaynak kapalı"},
+        403: {"description": "Anahtar yalnızca okuma yetkili (servis hesabı)"},
         413: {"description": "Gövde 1 MB'tan büyük"},
         429: {"description": "Hız sınırı; Retry-After saniye sonra yeniden dene"},
     },
@@ -411,7 +423,7 @@ def _gecersiz_olay(sira: int, ham, hata: ValidationError) -> EntegrasyonSonucu:
     "Veritabanı hatasında istek 5xx döner, bağlayıcı aynı olayları yeniden gönderir.",
 )
 def entegrasyon_olaylari(
-    istek: EntegrasyonIstegi, request: Request, conn: Baglanti, kaynak: EntegrasyonKaynagi
+    istek: EntegrasyonIstegi, request: Request, conn: Baglanti, kaynak: OlayKaynagi
 ):
     if bekle := request.app.state.hiz_siniri.al(kaynak.ad, len(istek.olaylar)):
         raise HTTPException(

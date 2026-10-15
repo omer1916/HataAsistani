@@ -68,6 +68,7 @@ class Kaynak:
     varsayilan_tip: str
     varsayilan_onem: str
     varsayilan_hat_durdurur: bool
+    yetki: str = "olay"  # olay ya da okuma (servis hesabı)
 
 
 @dataclass(frozen=True)
@@ -123,7 +124,7 @@ def kaynak_bul(conn: psycopg.Connection, anahtar: str | None) -> Kaynak | None:
     if not anahtar or not anahtar.startswith(ANAHTAR_ONEKI) or len(anahtar) > 200:
         return None
     satir = conn.execute(
-        "SELECT ad, katalog, varsayilan_tip, varsayilan_onem, varsayilan_hat_durdurur "
+        "SELECT ad, katalog, varsayilan_tip, varsayilan_onem, varsayilan_hat_durdurur, yetki "
         "FROM entegrasyon_kaynaklari WHERE anahtar_ozeti = %s AND aktif",
         [anahtar_ozeti(anahtar)],
     ).fetchone()
@@ -140,14 +141,16 @@ def kaynak_ekle(
     varsayilan_onem: str = "orta",
     varsayilan_hat_durdurur: bool = True,
     anahtar: str | None = None,
+    yetki: str = "olay",
 ) -> str:
-    """Kaynağı ekler ve anahtarını döner (anahtar yalnızca bu an görülür, saklanmaz)."""
+    """Kaynağı ekler ve anahtarını döner (anahtar yalnızca bu an görülür, saklanmaz).
+    yetki="okuma": servis hesabı, yalnızca okur."""
     anahtar = anahtar or anahtar_uret()
     conn.execute(
         "INSERT INTO entegrasyon_kaynaklari (ad, aciklama, katalog, anahtar_ozeti, varsayilan_tip, "
-        "varsayilan_onem, varsayilan_hat_durdurur) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        "varsayilan_onem, varsayilan_hat_durdurur, yetki) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
         [ad, aciklama, katalog, anahtar_ozeti(anahtar), varsayilan_tip, varsayilan_onem,
-         varsayilan_hat_durdurur],
+         varsayilan_hat_durdurur, yetki],
     )  # fmt: skip
     return anahtar
 
@@ -465,7 +468,7 @@ def durum(conn: psycopg.Connection, olay_sayisi: int = 50) -> dict:
     """Bakım ekibi için: kaynaklar, süren alarmlar ve son olaylar (anahtarlar yok)."""
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
-            "SELECT k.ad, k.aciklama, k.katalog, k.aktif, k.son_olay, "
+            "SELECT k.ad, k.aciklama, k.katalog, k.aktif, k.yetki, k.son_olay, "
             "(SELECT count(*) FROM aktif_alarmlar a WHERE a.kaynak = k.ad)::int AS aktif_alarm "
             "FROM entegrasyon_kaynaklari k ORDER BY k.ad"
         )

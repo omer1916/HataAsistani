@@ -71,9 +71,10 @@ def main() -> None:
         with baglan() as conn:
             seed.veritabanina_yaz(conn, veri)
             seed.demo_kullanicilari_yaz(conn, ayarlar().demo_parola)
-    with baglan() as conn:  # sonradan eklenen Telegram ve entegrasyon tabloları; veriye dokunmaz
+    with baglan() as conn:  # sonradan eklenen Telegram, entegrasyon, webhook; veriye dokunmaz
         conn.execute(seed.TELEGRAM_SEMASI.read_text(encoding="utf-8"))
         conn.execute(seed.ENTEGRASYON_SEMASI.read_text(encoding="utf-8"))
+        conn.execute(seed.WEBHOOK_SEMASI.read_text(encoding="utf-8"))
         entegrasyon.katalogu_yukle(conn)
         if anahtar := ayarlar().simulator_anahtari:
             entegrasyon.demo_kaynagi_hazirla(conn, anahtar)
