@@ -14,11 +14,10 @@ import asyncio
 import json
 import logging
 import re
-import sys
 from datetime import UTC, datetime
 from urllib.parse import unquote, urlparse
 
-import aiomqtt
+import paho.mqtt.client as paho
 
 from entegrasyon.izleyici import Izleyici, utc
 
@@ -81,6 +80,11 @@ def mesaj_coz(onek: str, konu: str, icerik: bytes) -> tuple[str, str, bool, date
 
 
 class MqttIzleyici(Izleyici):
+    """paho'nun kendi ağ iş parçacığıyla çalışır; gelen mesajlar olay döngüsüne
+    call_soon_threadsafe ile aktarılır. Soketler asyncio'ya kaydedilmez: Windows'ta da her olay
+    döngüsünde çalışır (aiomqtt'nin add_reader/add_writer yolu, bağlantı kurulurken kapanan
+    sokette Windows'un select'ini çökertiyordu)."""
+
     PROTOKOL = "MQTT"
 
     def __init__(self, adres: str, *args, **kwargs):
@@ -88,35 +92,67 @@ class MqttIzleyici(Izleyici):
         self.ayar = adres_coz(adres)
         self.yok_sayilan = 0  # bozuk mesaj sayısı (testler ve izleme için)
 
+    def _istemci(self, dongu, abone: asyncio.Event, koptu: asyncio.Event, hata: list):
+        a = self.ayar
+
+        def aktar(fonksiyon, *args):
+            # paho iş parçacığından olay döngüsüne; döngü kapandıysa (izleyici durdu) sessizce.
+            try:
+                dongu.call_soon_threadsafe(fonksiyon, *args)
+            except RuntimeError:
+                pass
+
+        def baglandi(istemci, _veri, _bayraklar, sebep, _ozellik):
+            if sebep.is_failure:
+                hata.append(f"aracı bağlantıyı reddetti: {sebep}")
+                aktar(koptu.set)
+            else:
+                istemci.subscribe(f"{a['onek']}/+/alarm/+", qos=1)
+
+        def abone_oldu(_istemci, _veri, _mid, sebepler, _ozellik):
+            if any(s.is_failure for s in sebepler):
+                hata.append(f"abonelik reddedildi: {sebepler[0]}")
+                aktar(koptu.set)
+            else:
+                aktar(abone.set)
+
+        istemci = paho.Client(paho.CallbackAPIVersion.VERSION2, clean_session=True)
+        istemci.on_connect = baglandi
+        istemci.on_subscribe = abone_oldu
+        istemci.on_message = lambda _i, _v, m: aktar(self._mesaj, m.topic, bytes(m.payload))
+        istemci.on_disconnect = lambda *_: aktar(koptu.set)
+        istemci.connect_timeout = self.zaman_asimi
+        if a["kullanici"]:
+            istemci.username_pw_set(a["kullanici"], a["parola"])
+        if a["tls"]:
+            istemci.tls_set()
+        return istemci
+
     async def _baglan_ve_izle(self, dur: asyncio.Event) -> None:
         a = self.ayar
-        async with aiomqtt.Client(
-            a["host"], a["port"], username=a["kullanici"], password=a["parola"],
-            tls_params=aiomqtt.TLSParameters() if a["tls"] else None,
-            keepalive=max(2, int(10 * min(1.0, self.ilk_bekleme * 4))),
-            timeout=self.zaman_asimi,
-        ) as istemci:  # fmt: skip
-            await istemci.subscribe(f"{a['onek']}/+/alarm/+", qos=1)
-            self._izlemeye_basla(None)
+        dongu = asyncio.get_running_loop()
+        abone, koptu, hata = asyncio.Event(), asyncio.Event(), []
+        istemci = self._istemci(dongu, abone, koptu, hata)
+        keepalive = max(2, int(10 * min(1.0, self.ilk_bekleme * 4)))
+        # connect() soket bağlanana kadar bekler; olay döngüsünü tutmasın.
+        await dongu.run_in_executor(None, istemci.connect, a["host"], a["port"], keepalive)
+        self._izlemeye_basla(None)  # retained mesajlar gelmeden
+        istemci.loop_start()
+        try:
+            bekleyenler = [asyncio.ensure_future(abone.wait()), asyncio.ensure_future(koptu.wait())]
+            await asyncio.wait(bekleyenler, timeout=self.zaman_asimi,
+                               return_when=asyncio.FIRST_COMPLETED)  # fmt: skip
+            for b in bekleyenler:
+                b.cancel()
+            if not abone.is_set():
+                raise ConnectionError(hata[0] if hata else "aracı aboneliği onaylamadı")
             gunluk.info("%s: %s/+/alarm/+ dinleniyor", self.gorunen_adres, a["onek"])
-            koptu = asyncio.Event()
-
-            async def dinle():
-                try:
-                    async for mesaj in istemci.messages:
-                        self._mesaj(str(mesaj.topic), bytes(mesaj.payload or b""))
-                except Exception:
-                    pass
-                finally:
-                    koptu.set()
-
-            gorev = asyncio.create_task(dinle())
-            try:
-                await asyncio.sleep(ILK_DEGER_SURESI * min(1.0, self.ilk_bekleme * 4))
-                self._hepsi_geldi.set()
-                await self._izle(dur, koptu)
-            finally:
-                gorev.cancel()
+            await asyncio.sleep(ILK_DEGER_SURESI * min(1.0, self.ilk_bekleme * 4))
+            self._hepsi_geldi.set()
+            await self._izle(dur, koptu)
+        finally:
+            istemci.disconnect()
+            await dongu.run_in_executor(None, istemci.loop_stop)
 
     def _mesaj(self, konu: str, icerik: bytes) -> None:
         try:
@@ -126,8 +162,3 @@ class MqttIzleyici(Izleyici):
             gunluk.warning("MQTT mesajı yok sayıldı: %s", str(hata)[:150])
             return
         self.degisti(makine, kod, aktif, zaman or datetime.now(UTC))
-
-
-def olay_dongusu_fabrikasi():
-    """aiomqtt Windows'ta seçici olay döngüsü ister (paho add_reader kullanır)."""
-    return asyncio.SelectorEventLoop if sys.platform == "win32" else None

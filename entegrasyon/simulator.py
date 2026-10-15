@@ -23,6 +23,7 @@ import json
 import logging
 import random
 import sys
+import threading
 from datetime import UTC, datetime
 
 from asyncua import Client, Server, ua
@@ -86,8 +87,8 @@ class Simulator:
         self.modbus: ModbusSunucusu | None = None
         self.mtconnect: MTConnectAjani | None = None
         self._mqtt_araci = None
-        self._yayin_kuyrugu: asyncio.Queue | None = None
-        self._gorevler: list[asyncio.Task] = []
+        self._yayinci = None  # paho istemcisi
+        self._yayin_kilidi = threading.Lock()
 
     # --- Açma, kapama -------------------------------------------------------------------------
 
@@ -140,15 +141,16 @@ class Simulator:
         return self
 
     async def durdur(self) -> None:
-        for gorev in self._gorevler:
-            gorev.cancel()
-        self._gorevler.clear()
         if self.modbus:
             await self.modbus.durdur()
             self.modbus = None
         if self.mtconnect:
             await self.mtconnect.durdur()
             self.mtconnect = None
+        if self._yayinci is not None:
+            yayinci, self._yayinci = self._yayinci, None
+            yayinci.disconnect()
+            await asyncio.get_running_loop().run_in_executor(None, yayinci.loop_stop)
         if self._mqtt_araci:
             await self._mqtt_araci.shutdown()
             self._mqtt_araci = None
@@ -166,11 +168,11 @@ class Simulator:
     def _guncelle(self, anahtar: tuple[str, str], aktif: bool, zaman: datetime) -> None:
         if self.degerler.get(anahtar, (None,))[0] == aktif:
             return
-        self.degerler[anahtar] = (aktif, zaman)
         adres = self.harita["makineler"][anahtar[0]][anahtar[1]]
         self.modbus_bitleri[adres] = aktif
-        if self._yayin_kuyrugu is not None:
-            self._yayin_kuyrugu.put_nowait((anahtar, aktif, zaman))
+        with self._yayin_kilidi:  # MQTT yeniden bağlanırken baştan yayınla karışmasın
+            self.degerler[anahtar] = (aktif, zaman)
+            self._yayinla(anahtar, aktif, zaman)
 
     async def aktifler(self) -> set[tuple[str, str]]:
         return {k for k, d in self.dugumler.items() if await d.read_value()}
@@ -186,8 +188,14 @@ class Simulator:
                 cihazlar[makine][kod] = zaman
         return cihazlar
 
+    def _yayinla(self, anahtar: tuple[str, str], aktif: bool, zaman: datetime) -> None:
+        if self._yayinci is not None:
+            icerik = json.dumps({"aktif": aktif, "zaman": zaman.isoformat()})
+            makine, kod = anahtar
+            self._yayinci.publish(f"{MQTT_ONEKI}/{makine}/alarm/{kod}", icerik, qos=1, retain=True)
+
     async def _mqtt_baslat(self) -> None:
-        import aiomqtt
+        import paho.mqtt.client as paho
         from amqtt.broker import Broker
 
         host, port = self.mqtt_adresi
@@ -198,30 +206,21 @@ class Simulator:
                  "allow_anonymous": True}}},
         )  # fmt: skip
         await self._mqtt_araci.start()
-        self._yayin_kuyrugu = asyncio.Queue()
         baglanilacak = "127.0.0.1" if host in ("0.0.0.0", "") else host
 
-        async def yayinla():
-            while True:
-                try:
-                    async with aiomqtt.Client(
-                        baglanilacak, port, identifier=f"pres3-plc-{id(self)}"
-                    ) as istemci:
-                        # Her bağlanışta bütün durum baştan (kopukken kaybolan yayın kalmasın).
-                        while not self._yayin_kuyrugu.empty():
-                            self._yayin_kuyrugu.get_nowait()
-                        for anahtar, (aktif, zaman) in self.degerler.items():
-                            self._yayin_kuyrugu.put_nowait((anahtar, aktif, zaman))
-                        while True:
-                            (makine, kod), aktif, zaman = await self._yayin_kuyrugu.get()
-                            icerik = json.dumps({"aktif": aktif, "zaman": zaman.isoformat()})
-                            await istemci.publish(
-                                f"{MQTT_ONEKI}/{makine}/alarm/{kod}", icerik, qos=1, retain=True
-                            )
-                except aiomqtt.MqttError:
-                    await asyncio.sleep(0.5)
+        def baglandi(istemci, *_):
+            # Her bağlanışta bütün durum baştan (retained): kopukken kaybolan yayın kalmasın.
+            with self._yayin_kilidi:
+                for anahtar, (aktif, zaman) in list(self.degerler.items()):
+                    self._yayinla(anahtar, aktif, zaman)
 
-        self._gorevler.append(asyncio.create_task(yayinla()))
+        # paho'nun kendi ağ iş parçacığı (bkz. entegrasyon/mqtt.py); yeniden bağlanmayı o yapar.
+        yayinci = paho.Client(paho.CallbackAPIVersion.VERSION2, client_id=f"pres3-plc-{id(self)}")
+        yayinci.on_connect = baglandi
+        yayinci.reconnect_delay_set(0.1, 2)
+        yayinci.connect_async(baglanilacak, port)
+        self._yayinci = yayinci
+        yayinci.loop_start()
 
     async def rastgele(self, aralik: float, dur: asyncio.Event, rng: random.Random) -> None:
         """Ortalama `aralik` saniyede bir rastgele bir alarm verir; alarm 10-120 sn sürer."""
@@ -286,11 +285,6 @@ async def _sunucu(args) -> None:
         await sim.durdur()
 
 
-def olay_dongusu():
-    """MQTT (aiomqtt) Windows'ta seçici olay döngüsü ister."""
-    return asyncio.SelectorEventLoop if sys.platform == "win32" else None
-
-
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     for gurultulu in ("asyncua", "amqtt", "transitions"):
@@ -316,7 +310,7 @@ def main() -> None:
 
     if args.komut == "sunucu":
         try:
-            asyncio.run(_sunucu(args), loop_factory=olay_dongusu())
+            asyncio.run(_sunucu(args))
         except KeyboardInterrupt:
             pass
     elif args.komut == "alarm":

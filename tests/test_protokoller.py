@@ -23,6 +23,7 @@ from baglayici_ortami import (
     YOGUN,
     Ortam,
     baglayici_adresi,
+    bekci,
     bos_port,
     calistir,
     deneme_haritasi,
@@ -34,7 +35,7 @@ from hypothesis import strategies as st
 from entegrasyon import baglayici, modbus, mqtt, mtconnect
 from entegrasyon.izleyici import Izleyici, gizle
 from entegrasyon.kuyruk import Kuyruk
-from entegrasyon.simulator import Simulator, modbus_haritasi, olay_dongusu
+from entegrasyon.simulator import Simulator, modbus_haritasi
 
 FUZZ = 3000 if YOGUN else 300
 AYAR = settings(max_examples=FUZZ, deadline=None, suppress_health_check=list(HealthCheck))
@@ -42,7 +43,7 @@ T0 = datetime(2026, 10, 15, 8, 0, tzinfo=UTC)
 
 
 def dongude(senaryo):
-    return asyncio.run(senaryo(), loop_factory=olay_dongusu())
+    return asyncio.run(senaryo())
 
 
 def olaylar(kuyruk: Kuyruk) -> list[tuple[str, str, str]]:
@@ -978,7 +979,7 @@ def test_mtconnect_ajani_yalnizca_get_current():
 
 
 def test_mqtt_bozuk_yayinlar_yok_sayilir_gecerliler_islenir(istemci, test_veritabani, kaynak):
-    import aiomqtt
+    import paho.mqtt.client as paho
 
     bozuklar = [
         (KONU, b"belki"), (KONU, b"\xff\xfe"), (KONU, b"1" * 2000), (KONU, b'{"aktif": "evet"}'),
@@ -990,16 +991,22 @@ def test_mqtt_bozuk_yayinlar_yok_sayilir_gecerliler_islenir(istemci, test_verita
         await o.simulator_ac()
         await o.baglayici_ac()
         izleyici = o.baglayici.izleyici
-        async with aiomqtt.Client("127.0.0.1", o.portlar["mqtt"]) as yayinci:
+        yayinci = paho.Client(paho.CallbackAPIVersion.VERSION2)
+        yayinci.connect("127.0.0.1", o.portlar["mqtt"])
+        yayinci.loop_start()
+        try:
             for konu, icerik in bozuklar:
-                await yayinci.publish(konu, icerik, qos=1)
+                yayinci.publish(konu, icerik, qos=1)
             await kosul(lambda: izleyici.yok_sayilan == len(bozuklar), "bozuklar sayılmadı")
-            await yayinci.publish(f"{ONEK}/XX-99/alarm/A1", b"1", qos=1)  # API'de olmayan makine
+            yayinci.publish(f"{ONEK}/XX-99/alarm/A1", b"1", qos=1)  # API'de olmayan makine
             await kosul(lambda: o.baglayici.gonderici.atilan == 1, "bilinmeyen makine atılmadı")
-            await yayinci.publish(f"{ONEK}/P3-HP/alarm/A104", b"1", qos=1)  # zamansız, geçerli
+            yayinci.publish(f"{ONEK}/P3-HP/alarm/A104", b"1", qos=1)  # zamansız, geçerli
             await kosul(lambda: o.aktifler() == {("P3-HP", "A104")})
-            await yayinci.publish(f"{ONEK}/P3-HP/alarm/A104", b"0", qos=1)
+            yayinci.publish(f"{ONEK}/P3-HP/alarm/A104", b"0", qos=1)
             await kosul(lambda: not o.aktifler() and not o.acik_arizalar())
+        finally:
+            yayinci.disconnect()
+            yayinci.loop_stop()
         assert izleyici.baglanti_sayisi == 1 and izleyici.bagli.is_set()
 
     calistir(istemci, test_veritabani, kaynak, senaryo, protokol="mqtt")
@@ -1063,7 +1070,7 @@ def test_dort_protokol_ayni_plcyi_izler_ayni_sonuca_varir(
                 await o.sim.durdur()
             o.db.close()
 
-    asyncio.run(ana(), loop_factory=olay_dongusu())
+    asyncio.run(bekci(ana()))
 
 
 def test_simulator_eski_opcua_bildirimi_durumu_geri_cevirmez():

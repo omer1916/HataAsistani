@@ -7,6 +7,7 @@ test veritabanına bağlı API'ye gönderir (httpx ASGITransport; ağ yok).
 import asyncio
 import os
 import socket
+import sys
 import time
 
 import httpx
@@ -14,7 +15,7 @@ import psycopg
 
 from entegrasyon.baglayici import Baglayici
 from entegrasyon.kuyruk import Kuyruk
-from entegrasyon.simulator import Simulator, modbus_haritasi, olay_dongusu
+from entegrasyon.simulator import Simulator, modbus_haritasi
 
 YOGUN = os.environ.get("HA_YOGUN") == "1"
 HIZLI = 0.02  # testlerde bekleme ölçeği (gerçekte 1 sn)
@@ -134,6 +135,34 @@ async def kosul(fonksiyon, mesaj="koşul sağlanmadı", sure=15.0):
         await asyncio.sleep(0.02)
 
 
+SENARYO_SINIRI = 600.0 if YOGUN else 120.0
+
+
+def gorev_dokumu() -> str:
+    """Bütün asyncio görevlerinin nerede beklediği (takılan senaryoyu teşhis etmek için)."""
+    satirlar = []
+    for gorev in asyncio.all_tasks():
+        satirlar.append(f"--- {gorev.get_name()} {gorev.get_coro()!r}")
+        for cerceve in gorev.get_stack(limit=12):
+            kod = cerceve.f_code
+            satirlar.append(f"    {kod.co_filename}:{cerceve.f_lineno} {kod.co_name}")
+    return "\n".join(satirlar)
+
+
+async def bekci(ana, sinir: float = SENARYO_SINIRI):
+    """Senaryo `sinir` saniyede bitmezse görev dökümünü yazar (pytest'in yakalamasını aşarak) ve
+    testi düşürür: süresiz bekleyen bir await CI'ı sessizce kilitlemesin."""
+    gorev = asyncio.ensure_future(ana)
+    bitti, _ = await asyncio.wait({gorev}, timeout=sinir)
+    if not bitti:
+        dokum = gorev_dokumu()
+        sys.__stderr__.write(f"\nSENARYO TAKILDI ({sinir:.0f} sn):\n{dokum}\n")
+        sys.__stderr__.flush()
+        gorev.cancel()
+        raise AssertionError(f"senaryo {sinir:.0f} sn'de bitmedi:\n{dokum}")
+    return gorev.result()
+
+
 def calistir(istemci, url, kaynak, senaryo, **ayar):
     async def ana():
         ortam = Ortam(istemci, url, kaynak, **ayar)
@@ -142,7 +171,7 @@ def calistir(istemci, url, kaynak, senaryo, **ayar):
         finally:
             await ortam.kapat()
 
-    asyncio.run(ana(), loop_factory=olay_dongusu())
+    asyncio.run(bekci(ana()))
 
 
 class KesintiliTransport(httpx.AsyncBaseTransport):

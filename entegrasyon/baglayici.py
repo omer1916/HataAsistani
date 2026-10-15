@@ -139,13 +139,11 @@ async def _ana() -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
-    for gurultulu in ("asyncua", "pymodbus", "aiomqtt"):
+    for gurultulu in ("asyncua", "pymodbus"):
         logging.getLogger(gurultulu).setLevel(logging.ERROR)
     logging.getLogger("httpx").setLevel(logging.WARNING)  # her isteği yazmasın
-    # MQTT (aiomqtt) Windows'ta seçici olay döngüsü ister; diğer protokoller iki döngüde de çalışır.
-    dongu = asyncio.SelectorEventLoop if sys.platform == "win32" else None
     try:
-        asyncio.run(_ana(), loop_factory=dongu)
+        asyncio.run(_ana())
     except KeyboardInterrupt:
         pass
 

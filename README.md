@@ -113,7 +113,7 @@ http://localhost:8000/docs adresindedir.
 | Güvenlik | JWT (PyJWT), argon2 (pwdlib) |
 | Arayüz | HTML, CSS, vanilla JavaScript (dış bağımlılık yok) |
 | Telegram | Bot API, httpx ile ince istemci, uzun yoklama (dışarıya açık adres gerekmez) |
-| Makine entegrasyonu | OPC UA (asyncua), Modbus TCP (pymodbus), MQTT (aiomqtt), MTConnect; PostgreSQL LISTEN/NOTIFY, SQLite kuyruklu bağlayıcı |
+| Makine entegrasyonu | OPC UA (asyncua), Modbus TCP (pymodbus), MQTT (paho-mqtt), MTConnect; PostgreSQL LISTEN/NOTIFY, SQLite kuyruklu bağlayıcı |
 | Dış sistemler | HMAC-SHA256 imzalı webhook (giden kutusu, `FOR UPDATE SKIP LOCKED`), Teams ve Slack biçimi, salt okunur servis hesabı |
 | Kalite | pytest (3116 test), Hypothesis, ruff, GitHub Actions |
 | Çalıştırma | Docker Compose |
@@ -461,6 +461,13 @@ Testlerin bulduğu gerçek hatalar:
   için her seferinde yeni bir olay kaydı açılıyordu; MQTT'de kopukken biten alarm bir sonraki
   yeniden bağlanmaya kadar açık kalabiliyordu. Kural sadeleşti: olay yalnızca değer bilinen son
   değerden farklıysa üretilir.
+- Yoğun turda bir MQTT testi süresiz takıldı. Sebebi: kullanılan MQTT kütüphanesi (aiomqtt)
+  soketi asyncio döngüsüne kaydediyordu; aracı tam bağlanma anında açılınca kapanan soket döngüde
+  kalıyor, Windows'ta olay döngüsünü çökertiyor ya da kilitliyordu (aynı senaryo üç turda bir
+  düştü). Bağlayıcıyı bir fabrika bilgisayarında Windows'ta çalıştıran için gerçek bir risk.
+  MQTT artık paho'nun kendi ağ iş parçacığıyla çalışıyor, mesajlar olay döngüsüne aktarılıyor;
+  aynı senaryo 15 turda 120 kez geçti. Test ortamına bir bekçi eklendi: senaryo süresini aşarsa
+  bütün asyncio görevlerinin nerede beklediğini yazıp testi düşürür, CI sessizce kilitlenmez.
 - MTConnect cevabında bilinmeyen bir kodlama (`encoding="bogus"`) "bozuk XML" yerine başka bir
   hata türü fırlatıyordu; MQTT adresindeki `#` joker değil URL parçası sayılıp yok sayılıyordu;
   geçerli şemalı ama hatalı adres (`http://ajan?aralik=0`) bağlayıcıyı anlaşılır mesaj yerine
