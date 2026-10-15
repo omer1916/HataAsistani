@@ -12,10 +12,12 @@ WORKDIR /app
 # CPU sürümü yeterli (~200 MB).
 RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
 
-# Önce yalnızca bağımlılıklar: kod değiştiğinde bu katman önbellekten gelir.
-COPY pyproject.toml README.md ./
+# Önce yalnızca bağımlılıklar: kod değiştiğinde bu katman önbellekten gelir. pyproject README'yi
+# yalnızca paket meta verisi için okur; gerçek README kopyalansaydı her README düzenlemesi bu
+# katmanı bozup bütün paketleri (scipy, transformers...) yeniden indirtirdi. Boş dosya yeter.
+COPY pyproject.toml ./
 COPY app/__init__.py app/__init__.py
-RUN pip install -e .
+RUN touch README.md && pip install -e .
 
 COPY app ./app
 COPY scripts ./scripts

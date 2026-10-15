@@ -35,6 +35,15 @@ veritabanından gelir; asistanın yazdığı yorumdaki her sayı bu verilerle ka
 **Bakım planı** (yalnızca bakım rolü) her makinenin önümüzdeki günlerde arıza olasılığını son
 90 günün arızalarından tahmin eder ve ekibin sınırlı saatini, beklenen hat duruşunu en çok
 azaltacak makinelere dağıtır. Şu an arızalı olan makine de "tamirden sonra" notuyla plana girer.
+Periyodik bakımı geciken makine plana önce girer.
+
+**Periyodik bakım** (yalnızca bakım rolü) her makinenin bakım planlarını (aylık, 6 aylık,
+yıllık) son bakım, sıradaki tarih ve durumla gösterir: ▼ gecikti, ◆ yaklaşıyor (7 gün içinde),
+● zamanında. Aralıklar ve yapılacaklar bakım kılavuzunun periyodik bakım bölümünden gelir;
+kaynağa tıklayınca kılavuz o sayfada açılır. Kılavuzunda takvim olmayan makineye genel aylık
+bakım tanımlıdır. "Yapıldı" ile tarih, süre ve not girilir; plana bağlı kapanmış bir iş emri
+açılır ve sıradaki tarih kendiliğinden kayar. Asistana "hangi bakımlar gecikti?", "P3-HP'nin son
+bakımı ne zaman?" diye sorulabilir; bakım ekibine her sabah Telegram'dan liste gider.
 
 **Telegram botu** (isteğe bağlı) hat durduğunda bakım ekibine kılavuzdaki ilk adım ve yedek
 parça durumuyla anında bildirim gönderir; sahadan soru sormayı ve fotoğrafla bakım talebi
@@ -60,7 +69,7 @@ açmayı sağlar. Ayrıntılar ve veri gizliliği: [Telegram botu](#telegram-bot
 
 ```mermaid
 flowchart LR
-    K["Tarayıcı<br/>(vanilla JS)"] -->|JWT| API["FastAPI<br/>/chat · /ara · /arizalar<br/>/oee · /rapor/vardiya · /bakim-plani"]
+    K["Tarayıcı<br/>(vanilla JS)"] -->|JWT| API["FastAPI<br/>/chat · /ara · /arizalar<br/>/oee · /rapor/vardiya · /bakim-plani<br/>/periyodik-bakim"]
     API --> AG["Agent döngüsü<br/>(en fazla 6 adım)"]
     AG <-->|"araç çağrıları"| LLM["Gemini / Ollama<br/>OpenAI uyumlu API"]
     AG --> T1["ariza_say · oee_hesapla · bakim_plani_oner<br/>stok_sorgula · bakim_talebi_olustur"]
@@ -98,7 +107,7 @@ http://localhost:8000/docs adresindedir.
 | Güvenlik | JWT (PyJWT), argon2 (pwdlib) |
 | Arayüz | HTML, CSS, vanilla JavaScript (dış bağımlılık yok) |
 | Telegram | Bot API, httpx ile ince istemci, uzun yoklama (dışarıya açık adres gerekmez) |
-| Kalite | pytest (2594 test), Hypothesis, ruff, GitHub Actions |
+| Kalite | pytest (2666 test), Hypothesis, ruff, GitHub Actions |
 | Çalıştırma | Docker Compose |
 
 ## Telegram botu
@@ -108,7 +117,8 @@ http://localhost:8000/docs adresindedir.
 | Arıza bildirimi | Hattı durduran yeni bir arıza kaydedildiği anda (1 saniyenin altında) eşleşmiş herkese bildirilir. Bakım rolüne kılavuzdan ilk adım (sayfa numarasıyla) ve ilgili yedek parçaların stoğu gider; operatöre yalnızca hattın durduğu. |
 | Sahadan soru | Yazılan her mesaj web arayüzündeki agent'a, kullanıcının kendi rolüyle gider. |
 | Fotoğraflı talep | Fotoğraf + açıklama ("P3-HP'de yağ kaçağı var") ile bakım talebi açılır, fotoğraf talebe eklenir; bakım mühendisi vardiya raporunda görür. |
-| Komutlar | `/rapor` son vardiya raporu, `/oee [hat]` son 7 gün, `/plan [saat]` bakım planı (yalnızca bakım), `/gizlilik`, `/cikis`, `/yardim` |
+| Sabah özeti | Her sabah 07.30'da bakım rolüne geciken ve o gün vadesi gelen periyodik bakımlar ile bu haftanın sayısı gider (`TELEGRAM_BAKIM_OZETI_SAATI`). Gün başına bir kez; bot gün içinde yeniden başlasa da tekrar gitmez, akşam 20.00'den sonra açılırsa o günün özeti atlanır. |
+| Komutlar | `/rapor` son vardiya raporu, `/oee [hat]` son 7 gün, `/plan [saat]` bakım planı, `/bakimlar` geciken ve bu haftaki periyodik bakımlar (son ikisi yalnızca bakım), `/gizlilik`, `/cikis`, `/yardim` |
 
 ### Kurulum
 
@@ -128,6 +138,7 @@ bota giden mesajları yazdırır. Gerçek Telegram'a istek gitmez. Token bir par
      rapor - Son vardiyanın raporu
      oee - Son 7 günün OEE'si (örn. /oee Pres 3)
      plan - Haftalık bakım planı (bakım rolü)
+     bakimlar - Geciken ve bu haftaki periyodik bakımlar (bakım rolü)
      gizlilik - Neyin saklandığı ve nereye gittiği
      yardim - Komutlar
      cikis - Bu sohbetin bağlantısını kaldırır
@@ -142,9 +153,11 @@ bota giden mesajları yazdırır. Gerçek Telegram'a istek gitmez. Token bir par
    ```bash
    docker compose --profile telegram up -d --build    # ya da: python scripts/telegram_bot.py
    ```
-   Bot, uygulama ve veritabanı `restart: unless-stopped` ile çalışır: bundan sonra Docker her
-   açıldığında (bilgisayar yeniden başlasa da) kendiliğinden başlar. Durdurmak için
-   `docker compose --profile telegram stop`; elle durdurulan servis Docker açılınca da kapalı kalır.
+   Bot, uygulama ve veritabanı `restart: always` ile çalışır: bundan sonra Docker her
+   açıldığında (bilgisayar yeniden başlasa da) kendiliğinden başlar. (`unless-stopped` yetmez:
+   Docker Desktop kapanırken konteynerleri durdurur ve bir sonraki açılışta başlatmaz.) Tamamen
+   kapatmak için `docker compose --profile telegram down`; veritabanı volume'da kalır, sonraki
+   `up -d` ile her şey geri gelir.
 5. Web arayüzünde sağ üstteki **Telegram** düğmesi → **Kod al** → "Telegram'da aç" (ya da botta
    `/baglan 123456`). Her kullanıcı kendi hesabını **bir kez** bağlar; bağlantı kalıcıdır (çıkış,
    tarayıcıyı kapatma, yeniden başlatma ve seed'den etkilenmez), yalnızca "Bağlantıyı kaldır"
@@ -227,6 +240,11 @@ görüş değildir):
   düz metin olarak gönderilir.
 - Eşleştirme tabloları seed'de silinmez (`sql/telegram.sql`, `IF NOT EXISTS`); kullanıcılar
   yeniden oluşturulsa da bağlantılar kalır.
+- Sabah özetinin gönderildiği gün `telegram_ozetleri` tablosunda işaretlenir; işaret
+  gönderimden önce konur (yarıda kesilirse tekrar değil eksik özet).
+- Docker sağlık denetimi: imajınki API'nin portuna baktığı için bot hep "unhealthy" görünüyordu.
+  Bot artık ana döngüsünün her turunda bir nabız dosyasına dokunuyor; 90 saniye dokunmadıysa
+  (döngü takıldı, Telegram'a ya da veritabanına ulaşılamıyor) konteyner "unhealthy" görünür.
 
 **Provanın yakaladıkları.** Sahte Telegram sunucusuyla, gerçek veritabanı, embedding modeli ve
 Gemini kullanılarak yapılan uçtan uca prova, birim testlerinin göremediği iki hata buldu:
@@ -277,6 +295,7 @@ rastgele karakter yerine Markdown parçalarından metin üretecek şekilde güç
 | `dokuman_ara(soru, k)` | Kılavuzlarda anlamsal arama; doküman kodu ve sayfa numarasıyla |
 | `stok_sorgula(parca_kodu, sadece_kritik)` | Yedek parça miktarı, yeri, kritik seviye |
 | `bakim_plani_oner(kapasite_saat, ufuk_gun)` | Haftalık bakım planı; yalnızca bakım rolü (operatöre düzeltilebilir hata döner) |
+| `periyodik_bakim_durumu(makine_kodu, hat, durum)` | Periyodik bakımların son ve sıradaki tarihi, durumu, kılavuzdaki kaynağı; yalnızca bakım rolü |
 | `bakim_talebi_olustur(makine_kodu, aciklama, oncelik)` | Bakım talebi açar |
 
 - Veritabanına giden her değer SQL parametresidir. LLM ne yazarsa yazsın bir tabloyu silemez, başka
@@ -493,7 +512,7 @@ Kontroller ve testler:
 
 ```bash
 ruff check . && ruff format --check .
-pytest                                  # 2594 test (~1 dk); veritabanı kapalıysa DB testleri atlanır
+pytest                                  # 2666 test (~1 dk); veritabanı kapalıysa DB testleri atlanır
 ```
 
 Testler gerçek bir PostgreSQL'e karşı çalışır: `andon_test` veritabanı sabit bir tarihle üretilen
@@ -506,9 +525,10 @@ embedder, senaryolu LLM); böylece testler model indirmeden ve API anahtarı olm
 | `test_farkli_yoldan` | 611 | Her hat × ay × arıza tipi, her gün, her stok kodu ve makine için API ve araç sonucu, SQL kullanmadan Python'da hesaplanan sonuçla aynı |
 | `test_oee` | 372 | 40 tohumda vardiya ve duruş kuralları ile OEE desenleri; planlı süre ve arıza duruşu dakika dakika kümelerle yeniden hesaplanıyor; her hat × ay ve rastgele aralıklar için API'nin OEE'si, günlük seyri, Pareto'su ve makine listesi SQL kullanmadan hesaplanan sonuçla aynı |
 | `test_seed_ozellikleri` | 280 | 40 farklı rastgele tohumla üretilen veride şema kuralları ve veri desenleri tutuyor |
-| `test_guvenlik_matrisi` | 269 | Her rol × uç nokta × token türü (süresi dolmuş, yanlış anahtar, `alg: none`, eksik alan, bilinmeyen rol...), yol oynamayla PDF, NUL baytı |
-| `test_telegram` | 58 | Eşleşmemiş sohbete ve gruplara veri gitmemesi, kodun özetinin saklanması, tek kullanım, süre ve deneme sınırı, silinmiş kullanıcı, rol (operatöre bakım kılavuzu yok), HTML kaçırma ve her girdide doğru iç içe etiket (Hypothesis), düz metne dönüş, soru sınırı, fotoğraflı talep, bildirimin role ve ayara göre içeriği, iki sorgu arasına yazılan ve sonradan hattı durduran arıza, engelleyen kullanıcı, komutlar, saklama süresi, hata sonrası offset, günlüğe içerik sızmaması, Bot API hatalarında token sızmaması |
-| `test_bakim_plani` | 341 | Weibull MLE'nin bilinen parametreleri bulması ve SciPy ile aynı olması, sansürün etkisi, olabilirlik oranı testinin yanlış alarm oranı, sırt çantasının 300 örnekte kaba kuvvetle aynı olması, plan verisinin SQL'siz hesapla aynı olması, 7 kapasitede en iyi seçim, rol ve doğrulama |
+| `test_guvenlik_matrisi` | 305 | Her rol × uç nokta × token türü (süresi dolmuş, yanlış anahtar, `alg: none`, eksik alan, bilinmeyen rol...), yol oynamayla PDF, NUL baytı |
+| `test_telegram` | 62 | Eşleşmemiş sohbete ve gruplara veri gitmemesi, kodun özetinin saklanması, tek kullanım, süre ve deneme sınırı, silinmiş kullanıcı, rol (operatöre bakım kılavuzu yok), HTML kaçırma ve her girdide doğru iç içe etiket (Hypothesis), düz metne dönüş, soru sınırı, fotoğraflı talep, bildirimin role ve ayara göre içeriği, iki sorgu arasına yazılan ve sonradan hattı durduran arıza, engelleyen kullanıcı, komutlar, saklama süresi, hata sonrası offset, günlüğe içerik sızmaması, Bot API hatalarında token sızmaması |
+| `test_bakim_plani` | 343 | Weibull MLE'nin bilinen parametreleri bulması ve SciPy ile aynı olması, sansürün etkisi, olabilirlik oranı testinin yanlış alarm oranı, sırt çantasının 300 örnekte kaba kuvvetle aynı olması, plan verisinin SQL'siz hesapla aynı olması, 7 kapasitede en iyi seçim, geciken periyodik bakımın önce girmesi, rol ve doğrulama |
+| `test_periyodik` | 33 | Planların kılavuz sayfası ve stok kodları kaynak metinle aynı, son/sıradaki bakım ve durum sınırları (Hypothesis), "Yapıldı" kaydı (geçmiş gün, ileri gün, eski tarih son bakımı geri almıyor), API ve doğrulama, agent aracı ve rol, `/bakimlar` ve sabah özetinin günde bir kez yalnızca bakıma gitmesi, arayüzün tarih metinleri (Node ile) |
 | `test_rapor` | 59 | Sayı denetimi (Türkçe/İngilizce yazım, uydurma fark ve hedef), 15 vardiyada raporun verisi SQL'siz hesapla aynı, kural yorumu da denetimden geçiyor, sahte LLM ile kabul / bir kez düzeltme / iki kez ret / API hatası yolları ve kayıtları |
 | `test_arama_butunlugu` | 118 | Her kılavuz parçası kendi metniyle ilk sırada bulunuyor; operatör 46 bakım parçasının hiçbirine birebir metniyle bile ulaşamıyor |
 | `test_arayuz_metin` | 100 | Arayüzün HTML temizleyicisi (Node ile) 46 XSS yükünde izinli etiket dışında hiçbir şey, hiçbir öznitelik üretmiyor |
@@ -517,7 +537,7 @@ embedder, senaryolu LLM); böylece testler model indirmeden ve API anahtarı olm
 | `test_degerlendirici` | 48 | Değerlendiricinin kendisi: sayı eşleştirme, Türkçe ekler, kaynak ve yetki kontrolü |
 | `test_arayuz_oee` | 20 | OEE panelinin tarih aralıkları (ay ve yıl sınırı, artık yıl), yüzde biçimi ve andon rengi eşikleri (Node ile) |
 | `test_ozellikler` | 10 | Hypothesis ile her biri 300 rastgele girdi: parçalama, token, tarih filtresi, sayı eşleştirme |
-| diğerleri | 147 | API, agent döngüsü, sistem istemindeki hazır tarih aralıkları (ay ve yıl sınırı), giriş, RAG, seed, değerlendirme setinin tutarlılığı |
+| diğerleri | 163 | API, agent döngüsü, sistem istemindeki hazır tarih aralıkları (ay ve yıl sınırı), giriş, RAG, seed, değerlendirme setinin tutarlılığı |
 
 Testlerin bulduğu iki gerçek hata düzeltildi: token'sız `/chat` isteğinin 401 yerine 503 dönmesi
 (giriş yapmamış biri sunucunun ayar durumunu öğrenebiliyordu) ve girdide NUL baytının
@@ -556,7 +576,8 @@ taranacağı: [`docs/claude-araclari.md`](docs/claude-araclari.md).
 | `hatlar`, `makineler` | 7 hat (Pres 1-3, Kaynak 1-2, Montaj 1, Boya 1) ve ideal çevrim süreleri, 21 makine |
 | `ariza_kayitlari` | 6 aylık arıza: başlangıç/bitiş, tip, önem, hattı durdurup durdurmadığı |
 | `stok` | Yedek parçalar ve minimum seviyeleri |
-| `is_emirleri` | Arıza müdahaleleri ve periyodik bakımlar, kullanılan parça |
+| `periyodik_bakimlar` | Makine başına bakım planları: aralık, tahmini süre, yapılacaklar, kılavuzdaki kaynak (doküman, sayfa, bölüm), sistem öncesi son bakım |
+| `is_emirleri` | Arıza müdahaleleri ve periyodik bakımlar (plana bağlı), kullanılan parça |
 | `bakim_talepleri` | Operatörlerin ve agent'ın açtığı talepler |
 | `vardiya_uretimi` | Her hattın her vardiyası: planlı süre, üretilen ve hurda adet (hafta içi üç, cumartesi iki, pazar bir vardiya) |
 | `vardiya_duruslari` | Vardiyadaki duruşlar: arıza (arıza kaydına bağlı), ürün değişimi, malzeme bekleme |
@@ -597,6 +618,7 @@ app/
   guvenilirlik.py  sansürlü Weibull MLE, üstel model, olabilirlik oranı testi
   planlama.py    sırt çantası: dinamik programlama ve açgözlü karşılaştırma
   bakim_plani.py makine riskleri ve haftalık bakım planı
+  periyodik.py   periyodik bakım takibi: son/sıradaki bakım, durum, "Yapıldı" kaydı
   telegram_bot.py  Telegram botu: eşleştirme, soru, fotoğraflı talep, bildirim, komutlar
   telegram_api.py  Telegram Bot API istemcisi (token'ı hatalara sızdırmaz)
   tools.py       agent araçları ve JSON şemaları
@@ -605,7 +627,7 @@ app/
   embedding.py   multilingual-e5-small
   auth.py        JWT, roller, parola hash'i
   sorgular.py    SQL sorguları
-  static/        sohbet, OEE paneli ve vardiya raporu ekranları
+  static/        sohbet, OEE paneli, vardiya raporu, bakım planı ve periyodik bakım ekranları
 scripts/         seed, ingest, kılavuz PDF üretimi, ölçüm ve değerlendirme
   telegram_bot.py    botu çalıştırır (uzun yoklama)
   telegram_prova.py  token olmadan uçtan uca prova (sahte Telegram sunucusu)
@@ -614,7 +636,7 @@ sql/             şema ve referans sorgular
 data/kilavuzlar/ kurgusal kılavuzlar (Markdown kaynak + PDF)
 eval/            arama ve agent değerlendirme setleri
 sunum/           tanıtım PDF'i (Hata-Asistani-Tanitim.pdf) ve onu üreten betikler
-tests/           2594 test
+tests/           2666 test
 ```
 
 Tanıtım PDF'indeki ekran görüntüleri çalışan uygulamadan alınır:
@@ -623,8 +645,8 @@ Chrome'u kullanır), ardından `python sunum/pdf_olustur.py`.
 
 ## Bilinen eksikler
 
-- **Telegram botu tek iş parçacığında çalışıyor.** LLM bir soruyu cevaplarken (2-4 sn) diğer
-  mesajlar sırada bekler; birkaç kişilik bir ekip için yeterli, büyük bir fabrika için iş kuyruğu
+- **Telegram botu soruları tek iş parçacığında cevaplıyor.** LLM bir soruyu cevaplarken (2-4 sn)
+  diğer mesajlar sırada bekler (arıza bildirimi ayrı iş parçacığında, beklemez); birkaç kişilik bir ekip için yeterli, büyük bir fabrika için iş kuyruğu
   gerekir. Vardiya raporu henüz otomatik gönderilmiyor (`/rapor` ile isteniyor) ve kanal olarak
   yalnızca Telegram var; Türkiye'deki sahada WhatsApp daha yaygın. Bot mantığı Telegram'a özgü
   kısımdan (`telegram_api.py`) ayrı olduğu için başka bir kanal eklemek mümkün.

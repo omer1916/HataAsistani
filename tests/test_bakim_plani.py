@@ -241,14 +241,42 @@ def test_plan_kapasiteyle_en_iyi_secim(baglanti, kapasite):
     secilen = [r for r in p["makineler"] if r["secildi"]]
     assert p["secilen_saat"] == sum(r["bakim_saat"] for r in secilen) <= kapasite
     assert p["onlenen_durus_dk"] == pytest.approx(sum(r["kazanc_dk"] for r in secilen))
-    adaylar = [Aday(r["bakim_saat"], r["kazanc_dk"]) for r in p["makineler"] if r["kazanc_dk"] > 0]
-    assert p["onlenen_durus_dk"] == pytest.approx(_en_iyi_deger(adaylar, kapasite))
+    # Geciken periyodik bakımlar (seed senaryosu: P3-HP yıllık) önce; kalan kapasitede en iyi.
+    zorunlu = [r for r in secilen if r["zorunlu"]]
+    assert p["periyodik_saat"] == sum(r["bakim_saat"] for r in zorunlu)
+    kalan = kapasite - p["periyodik_saat"]
+    adaylar = [
+        Aday(r["bakim_saat"], r["kazanc_dk"])
+        for r in p["makineler"]
+        if r["kazanc_dk"] > 0 and not r["zorunlu"]
+    ]
+    assert p["onlenen_durus_dk"] == pytest.approx(
+        sum(r["kazanc_dk"] for r in zorunlu) + _en_iyi_deger(adaylar, kalan)
+    )
     assert p["acgozlu_onlenen_durus_dk"] <= p["onlenen_durus_dk"] + 1e-9
-    # Sıra: önce seçilenler, sonra kazanca göre
-    anahtarlar = [(not r["secildi"], -r["kazanc_dk"]) for r in p["makineler"]]
+    # Sıra: önce seçilenler (zorunlular başta), sonra kazanca göre
+    anahtarlar = [(not r["secildi"], not r["zorunlu"], -r["kazanc_dk"]) for r in p["makineler"]]
     assert anahtarlar == sorted(anahtarlar)
     if kapasite == 200:
-        assert all(r["secildi"] for r in p["makineler"] if r["kazanc_dk"] > 0)
+        assert all(r["secildi"] for r in p["makineler"] if r["kazanc_dk"] > 0 or r["zorunlu"])
+
+
+def test_geciken_periyodik_bakim_plana_once_girer(baglanti):
+    # Seed senaryosu: P3-HP'nin yıllık bakımı SABIT_AN'da 12 gün gecikmiş (6 saat).
+    p = bakim_plani(baglanti, SABIT_AN, kapasite_saat=8)
+    p3_hp = next(r for r in p["makineler"] if r["makine_kodu"] == "P3-HP")
+    assert p3_hp["zorunlu"] and p3_hp["secildi"] and p3_hp["gecikme_gun"] == 12
+    assert p3_hp["gecikmis_bakimlar"] == ["Yıllık bakım (12 gün gecikti)"]
+    assert p3_hp["bakim_saat"] >= 6 and p["periyodik_saat"] == p3_hp["bakim_saat"]
+    assert p["makineler"][0] is p3_hp
+    assert sum(r["zorunlu"] for r in p["makineler"]) == 1  # başka geciken yok
+
+
+def test_kapasite_yetmezse_geciken_bakim_secilmez_ama_isaretli(baglanti):
+    p = bakim_plani(baglanti, SABIT_AN, kapasite_saat=1)  # 6 saatlik yıllık bakım sığmaz
+    p3_hp = next(r for r in p["makineler"] if r["makine_kodu"] == "P3-HP")
+    assert p3_hp["zorunlu"] and not p3_hp["secildi"]
+    assert p["periyodik_saat"] == 0 and p["secilen_saat"] <= 1
 
 
 def test_su_an_arizali_en_sorunlu_makine_plana_girer(plan):

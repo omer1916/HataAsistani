@@ -905,6 +905,7 @@ h3 {
 }
 
 .tablo-kap {
+  position: relative; /* tablodaki .gorunmez (absolute) metinler kutudan taşıp sayfayı genişletmesin */
   overflow-x: auto;
 }
 
@@ -1095,7 +1096,8 @@ h3 {
   }
 }
 
-/* Dört sekme, marka ve oturum bilgisi tek satıra sığmayınca sekmeler ikinci satıra iner. */
+/* Sekmeler, marka ve oturum bilgisi tek satıra sığmayınca sekmeler ikinci satıra iner. Telefonda
+   beş sekme de sığmaz: sekme çubuğu yana kayar, sayfa genişlemez. */
 @media (max-width: 1100px) {
   .ust {
     flex-wrap: wrap;
@@ -1104,10 +1106,17 @@ h3 {
   .sekmeler {
     order: 3;
     width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none; /* kaydırma çubuğu yerine yarım görünen sekme ipucu verir */
+  }
+
+  .sekmeler::-webkit-scrollbar {
+    display: none;
   }
 
   .sekme {
-    flex: 1;
+    flex: 1 0 auto;
   }
 }
 
@@ -1310,4 +1319,64 @@ h3 {
   select {
     font-size: 16px;
   }
+}
+
+/* --- Periyodik bakım -------------------------------------------------------- */
+
+.blok {
+  display: block;
+}
+
+#periyodik-icerik {
+  padding-bottom: 32px;
+}
+
+#periyodik-durum:focus {
+  outline: none;
+}
+
+.periyodik-tablosu th,
+.periyodik-tablosu td {
+  text-align: left;
+  vertical-align: top;
+}
+
+.periyodik-tablosu .yapilacaklar,
+.periyodik-tablosu .bolum {
+  min-width: 24ch;
+  max-width: 38ch;
+  white-space: normal; /* uzun açıklama satıra bölünsün */
+}
+
+.periyodik-tablosu .bolum {
+  min-width: 14ch;
+  max-width: 22ch;
+}
+
+.kucuk-dugme {
+  padding: 5px 12px;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.kaynak-dugmesi {
+  padding: 0;
+}
+
+.yapildi-formu {
+  display: grid;
+  gap: 12px;
+}
+
+.yapildi-formu label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--soluk);
+}
+
+.yapildi-formu input[type="date"],
+.yapildi-formu input[type="number"] {
+  width: auto;
 }

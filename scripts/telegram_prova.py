@@ -119,6 +119,7 @@ def main() -> None:
         mesaj(BAKIM, "/oee Pres 3")
         mesaj(BAKIM, "/plan 12")
         mesaj(OPERATOR, "/plan")
+        mesaj(BAKIM, "/bakimlar")
         mesaj(BAKIM, "/rapor")
         tur(api, bot, None)
 

@@ -199,9 +199,43 @@ URUN_DEGISIMI = {"pres": (1.2, 30), "kaynak": (0.5, 25), "montaj": (0.4, 20), "b
 PRES_3_DEGISIM_DK = 45  # eski hat: kalıp değişimi diğer preslerin 1,5 katı sürüyor
 MALZEME_BEKLEME = (0.15, 20)  # (vardiyada yaşanma olasılığı, medyan süresi dk)
 
+# Periyodik bakım planları, makine kodunun ekine göre (HP: hidrolik pres, KR1/KR2: kaynak
+# robotu): (ad, aralık gün, tahmini süre saat, yapılacaklar, kılavuzdaki kaynak). Aralıklar ve
+# yapılacaklar kılavuzun periyodik bakım bölümünden; sayfalar kaynak metinle test edilir
+# (tests/test_periyodik.py). Kılavuzunda takvimi olmayan makineye genel aylık bakım.
+_PRES = ("PRES-BK-01", 3)
+_KAYNAK = ("KR-BK-01", 1, "2.3 Aylık ve daha uzun aralıklar")
+_ROBOT_PLANLARI = [
+    ("Aylık bakım", 30, 3, "Robot kablo paketi (dress pack) sürtünme ve kırılma açısından, "
+     "soğutma suyu seviyesi eksiklik açısından kontrol edilir.", _KAYNAK),
+    ("6 aylık bakım", 182, 2, "Robot eksen redüktörlerinin yağ seviyesi kontrol edilir.", _KAYNAK),
+    ("Yıllık bakım", 365, 2, "Robot kontrol ünitesindeki enkoder yedek bataryaları "
+     "değiştirilir.", _KAYNAK),
+]  # fmt: skip
+PERIYODIK_PLANLAR = {
+    "HP": [
+        ("Aylık bakım", 30, 3, "Yağ numunesi partikül ve su analizine gönderilir; akümülatörün "
+         "azot ön dolum basıncı (130 bar) ve kalıp yayları (MEK-004) kontrol edilir.",
+         (*_PRES, "3.3 Aylık")),
+        ("6 aylık bakım", 182, 4, "Hidrolik yağ filtresi (HYD-001) değiştirilir; yağ analizi "
+         "kötüyse yağ tamamen değiştirilir ve tank temizlenir.",
+         (*_PRES, "3.4 Her 2000 çalışma saatinde veya 6 ayda bir")),
+        ("Yıllık bakım", 365, 6, "Pompa conta seti (HYD-004) ve emniyet valfi ayarı kontrol "
+         "edilir; 5 yaşını dolduran hidrolik hortumlar değiştirilir.", (*_PRES, "3.5 Yıllık")),
+    ],
+    "KR1": _ROBOT_PLANLARI,
+    "KR2": _ROBOT_PLANLARI,
+}  # fmt: skip
+# Kaynağın boş olması "kılavuzda takvim yok" demektir; arayüz ve araç bunu ayrıca gösterir.
+GENEL_AYLIK_BAKIM = ("Aylık bakım", 30, 3, "Genel kontrol, temizlik ve yağlama.", None)
+# Demo senaryosu: en sık arızalanan Pres 3'ün hidrolik presinin yıllık bakımı 12 gün gecikmiş,
+# P1-HP'nin 6 aylık bakımı bu hafta. Değer: sıradaki bakıma kalan gün (eksi: gecikme).
+PERIYODIK_SENARYO = {("P3-HP", "Yıllık bakım"): -12, ("P1-HP", "6 aylık bakım"): 4}
+
 TABLOLAR = [
     "hatlar",
     "makineler",
+    "periyodik_bakimlar",
     "stok",
     "ariza_kayitlari",
     "is_emirleri",
@@ -231,6 +265,45 @@ def _numarala(kayitlar: list[Kayit], sira_alani: str) -> list[Kayit]:
     """Kayıtları zamana göre sıralar ve 1'den başlayan id verir."""
     kayitlar.sort(key=lambda k: k[sira_alani])
     return [{"id": i, **k} for i, k in enumerate(kayitlar, start=1)]
+
+
+def _periyodik_planlar_uret(
+    rng: random.Random, son_an: datetime, ilk_gun: date, makineler: list[Kayit]
+) -> list[Kayit]:
+    """Her makinenin periyodik bakım planları. Aylık bakımın geçmişi seed'in iş emirlerinde
+    olduğundan baz tarihi verinin ilk günüdür. Uzun aralıklı bakımların geçmişi 6 aylık veriden
+    eski olabilir: baz tarih (sisteme geçmeden önceki son bakım) sıradaki tarih aralığın içinde
+    kalacak şekilde rastgele, senaryodakiler sabit."""
+    bugun = son_an.date()
+    planlar: list[Kayit] = []
+    for makine in makineler:
+        ek = str(makine["kod"]).split("-", 1)[1]
+        for ad, aralik, sure, yapilacaklar, kaynak in PERIYODIK_PLANLAR.get(
+            ek, [GENEL_AYLIK_BAKIM]
+        ):
+            if ad == "Aylık bakım":
+                baz = ilk_gun
+            else:
+                kalan = PERIYODIK_SENARYO.get((makine["kod"], ad))
+                if kalan is None:
+                    kalan = rng.randrange(8, aralik)  # gecikmemiş, bu hafta da değil
+                baz = bugun + timedelta(days=kalan - aralik)
+            dokuman, sayfa, bolum = kaynak or (None, None, None)
+            planlar.append(
+                {
+                    "id": len(planlar) + 1,
+                    "makine_id": makine["id"],
+                    "ad": ad,
+                    "aralik_gun": aralik,
+                    "sure_saat": sure,
+                    "yapilacaklar": yapilacaklar,
+                    "dokuman_kodu": dokuman,
+                    "sayfa": sayfa,
+                    "bolum": bolum,
+                    "baz_tarih": baz,
+                }
+            )
+    return planlar
 
 
 def veri_uret(son_an: datetime, tohum: int = 42) -> dict[str, list[Kayit]]:
@@ -411,6 +484,15 @@ def veri_uret(son_an: datetime, tohum: int = 42) -> dict[str, list[Kayit]]:
         )
     bakim_talepleri = _numarala(bakim_talepleri, "olusturma")
 
+    # Periyodik bakım planları da kendi üretecini kullanır; diğer tablolar değişmez. Seed'in
+    # aylık bakım iş emirleri makinenin aylık planına bağlanır.
+    planlar = _periyodik_planlar_uret(
+        random.Random(f"periyodik-{tohum}"), son_an, ilk_gun, makineler
+    )
+    aylik_plan = {p["makine_id"]: p["id"] for p in planlar if p["ad"] == "Aylık bakım"}
+    for emir in is_emirleri:
+        emir["plan_id"] = aylik_plan[emir["makine_id"]] if emir["tip"] == "periyodik" else None
+
     # Üretim verisi kendi rastgele sayı üreteciyle üretilir: yukarıdaki tablolar, üretim verisi
     # eklenmeden önceki hâlleriyle birebir aynı kalır.
     vardiyalar, duruslar = _uretim_verisi_uret(
@@ -420,6 +502,7 @@ def veri_uret(son_an: datetime, tohum: int = 42) -> dict[str, list[Kayit]]:
     return {
         "hatlar": hatlar,
         "makineler": makineler,
+        "periyodik_bakimlar": planlar,
         "stok": stok,
         "ariza_kayitlari": arizalar,
         "is_emirleri": is_emirleri,
@@ -634,7 +717,7 @@ def main() -> None:
 
     print(f"Veri {son_an:%Y-%m-%d %H:%M} anında bitecek şekilde yazıldı:")
     for tablo in TABLOLAR:
-        print(f"  {tablo:<16} {len(veri[tablo]):>5} kayıt")
+        print(f"  {tablo:<18} {len(veri[tablo]):>5} kayıt")
     kullanicilar = ", ".join(ad for ad, _, _ in DEMO_KULLANICILAR)
     print(f"Demo kullanıcıları: {kullanicilar} (parola: .env'deki DEMO_PAROLA)")
 

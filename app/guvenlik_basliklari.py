@@ -33,6 +33,12 @@ GENEL_BASLIKLAR = [
 # Swagger UI ve ReDoc kendi scriptlerini CDN'den ve satır içi yükler; sıkı politika onları kırar.
 CSP_DISI_YOLLAR = ("/docs", "/redoc")
 
+# Arayüz (sayfa ve /static) her açılışta sunucuya sorulsun. Cache-Control olmadan tarayıcı
+# Last-Modified'a bakıp eski JS'i saatlerce kendi kendine kullanabiliyor: güncellemeden sonra
+# yeni HTML eski JS ile açılıyor, yeni ekran çalışmıyordu. no-cache önbelleği kapatmaz;
+# değişmeyen dosya için sunucu 304 döner, dosya yeniden inmez.
+ARAYUZ_ON_EKI = "/static/"
+
 
 class GuvenlikBasliklari:
     """Her HTTP yanıtına güvenlik başlıklarını ekleyen ASGI ara katmanı.
@@ -51,6 +57,8 @@ class GuvenlikBasliklari:
         basliklar = list(GENEL_BASLIKLAR)
         if not scope["path"].startswith(CSP_DISI_YOLLAR):
             basliklar.append((b"content-security-policy", CSP.encode()))
+        if scope["path"] == "/" or scope["path"].startswith(ARAYUZ_ON_EKI):
+            basliklar.append((b"cache-control", b"no-cache"))
 
         async def gonder(mesaj):
             if mesaj["type"] == "http.response.start":

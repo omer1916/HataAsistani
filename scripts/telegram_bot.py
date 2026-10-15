@@ -14,16 +14,21 @@ Kullanım:
   gönderir (sql/telegram.sql'deki tetikleyici, LISTEN/NOTIFY). Bot sinyali bekler ve arızayı
   anında bildirir; mesaj işlemesini beklemez. Sinyal kaçarsa YEDEK_ARALIK saniyede bir yapılan
   kontrol yakalar. Her iş parçacığının kendi veritabanı bağlantısı vardır.
+Her sabah (TELEGRAM_BAKIM_OZETI_SAATI, varsayılan 07:30) bakım rolüne geciken ve o günün
+periyodik bakımları gider; gün başına bir kez.
 Günlüğe mesaj içeriği ve token yazılmaz.
 """
 
 import os
 import signal
 import sys
+import tempfile
 import threading
 import time
 import traceback
 from collections.abc import Callable
+from datetime import time as dt_time
+from pathlib import Path
 
 import psycopg
 from psycopg import sql
@@ -38,6 +43,8 @@ from app.telegram_bot import Bot
 ZAMAN_ASIMI = 30  # saniye; Telegram'dan mesaj beklenen en uzun süre (mesaj gelince hemen döner)
 YEDEK_ARALIK = 15  # saniye; tetikleyicinin sinyali kaçarsa arıza en geç bu kadar sonra bildirilir
 BILDIRIM_KANALI = "ariza_kayitlari"  # sql/telegram.sql'deki tetikleyicinin kanalı
+# Ana döngü her turda dokunur; docker-compose.yml'deki sağlık denetimi dosyanın yaşına bakar.
+NABIZ_DOSYASI = Path(tempfile.gettempdir()) / "hata-asistani-bot.nabiz"
 TEMIZLIK_ARALIGI = 3600  # saniye
 
 
@@ -85,6 +92,20 @@ def bildirim_turu(bot: Bot) -> None:
     else:
         if gonderilen:
             gunluk(f"{gonderilen} arıza bildirimi gönderildi")
+
+
+def sabah_ozeti_turu(bot: Bot, saat: dt_time) -> None:
+    """Sabah özetinin saati geldiyse gönderir. Veritabanı kopması ana döngüye çıkar (yeniden
+    bağlanır); başka bir hata botu düşürmez."""
+    try:
+        gonderilen = bot.sabah_ozetini_gonder(saat)
+    except psycopg.OperationalError:
+        raise
+    except Exception as hata:
+        hatayi_yaz("periyodik bakım özeti gönderilemedi", hata)
+    else:
+        if gonderilen:
+            gunluk(f"periyodik bakım özeti {gonderilen} kişiye gönderildi")
 
 
 def _yeni_baglanti(baglanti_ac: Callable[[], psycopg.Connection]) -> psycopg.Connection:
@@ -171,6 +192,8 @@ def main() -> None:
                 bot.conn.autocommit = True
                 gunluk("veritabanına yeniden bağlanıldı")
             offset = tur(api, bot, offset)
+            NABIZ_DOSYASI.touch()  # Docker sağlık denetimi: döngü dönüyor
+            sabah_ozeti_turu(bot, a.telegram_bakim_ozeti_saati)
             if time.monotonic() - son_temizlik > TEMIZLIK_ARALIGI:
                 kod, foto = bot.eski_verileri_temizle()
                 if kod or foto:

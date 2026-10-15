@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 
-from app import __version__, agent, bakim_plani, rag, rapor, sorgular, telegram_bot
+from app import __version__, agent, bakim_plani, periyodik, rag, rapor, sorgular, telegram_bot
 from app.auth import AktifKullanici, Kullanici, parola_dogrula, rol_gerekli, token_uret
 from app.ayarlar import ayarlar
 from app.db import TZ, havuz_olustur
@@ -35,10 +35,14 @@ from app.models import (
     ArizaListesi,
     BakimPlani,
     BakimPlaniFiltresi,
+    BakimYapildi,
     Hat,
     KullanimOzeti,
     OeeFiltresi,
     OeeOzeti,
+    PeriyodikBakim,
+    PeriyodikBakimFiltresi,
+    PeriyodikBakimListesi,
     RaporIstegi,
     Saglik,
     SohbetCevabi,
@@ -269,6 +273,67 @@ def bakim_plani_getir(
     return bakim_plani.bakim_plani(  # secscope: ignore SAST-MASSASSIGN-001
         conn, datetime.now(TZ), **filtre.model_dump()
     )
+
+
+@router.get(
+    "/periyodik-bakim",
+    response_model=PeriyodikBakimListesi,
+    responses={403: {"description": "Yalnızca bakım rolü"}, 404: {"description": "Hat yok"}},
+    summary="Periyodik bakımlar: son bakım, sıradaki tarih ve durum (gecikti, yaklaşıyor...)",
+)
+def periyodik_bakimlar(
+    filtre: Annotated[PeriyodikBakimFiltresi, Query()],
+    conn: Baglanti,
+    _: Annotated[Kullanici, Depends(rol_gerekli("bakim"))],
+):
+    _hat_dogrula(conn, filtre.hat)
+    bugun = datetime.now(TZ).date()
+    bakimlar = periyodik.bakimlari_getir(
+        conn,
+        bugun,
+        makine_kodu=filtre.makine,
+        hat=sorgular.hat_adini_bul(conn, filtre.hat) if filtre.hat else None,
+    )
+    return PeriyodikBakimListesi(
+        bugun=bugun,
+        yaklasma_gun=periyodik.YAKLASMA_GUN,
+        **periyodik.ozet(bakimlar),
+        bakimlar=bakimlar,
+    )
+
+
+@router.post(
+    "/periyodik-bakim/{plan_id}/yapildi",
+    response_model=PeriyodikBakim,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        403: {"description": "Yalnızca bakım rolü"},
+        404: {"description": "Plan yok"},
+        422: {"description": "Geçersiz tarih ya da süre"},
+    },
+    summary="Periyodik bakımın yapıldığını kaydeder; sıradaki tarih kendiliğinden kayar",
+)
+def periyodik_bakim_yapildi(
+    plan_id: Annotated[int, FastAPIPath(ge=1, le=2_147_483_647)],
+    kayit: BakimYapildi,
+    conn: Baglanti,
+    kullanici: Annotated[Kullanici, Depends(rol_gerekli("bakim"))],
+):
+    try:
+        sonuc = periyodik.yapildi_kaydet(
+            conn,
+            plan_id,
+            yapan=kullanici.ad_soyad,
+            simdi=datetime.now(TZ),
+            tarih=kayit.tarih,
+            sure_saat=kayit.sure_saat,
+            aciklama=kayit.aciklama.strip() if kayit.aciklama else None,
+        )
+    except periyodik.BakimKaydiHatasi as hata:
+        raise HTTPException(422, str(hata)) from None
+    if sonuc is None:
+        raise HTTPException(404, "Periyodik bakım planı bulunamadı.")
+    return sonuc
 
 
 @router.post(

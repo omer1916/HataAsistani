@@ -28,11 +28,12 @@ import time
 from collections import defaultdict, deque
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
+from datetime import time as gun_saati
 from typing import Literal
 
 import psycopg
 
-from app import agent, bakim_plani, rag, rapor, sorgular
+from app import agent, bakim_plani, periyodik, rag, rapor, sorgular
 from app.auth import ROL_ADLARI, ROL_ERISIMI, Kullanici
 from app.db import TZ
 from app.embedding import Embedder
@@ -47,6 +48,8 @@ SORU_SINIRI, SORU_PENCERESI_SN = 10, 60  # 60 saniyede en fazla 10 soru
 EN_BUYUK_FOTOGRAF = 5 * 1024 * 1024
 BildirimAyrintisi = Literal["ayrintili", "kisa"]
 ONEM_ADLARI = {"dusuk": "düşük", "orta": "orta", "yuksek": "yüksek"}
+# Sabah özeti bu saatten sonra açılan botla gönderilmez ("günaydın" akşam gitmesin).
+OZET_SON_SAAT = gun_saati(20, 0)
 
 TANITIM = (
     "Merhaba, ben Hata Asistanı. Fabrika verisini ve kılavuzları yalnızca eşleşmiş hesaplarla "
@@ -66,6 +69,7 @@ def yardim_metni(kullanici: Kullanici) -> str:
     ]
     if kullanici.rol == "bakim":
         satirlar.append("/plan [saat] haftalık bakım planı, örneğin <code>/plan 16</code>")
+        satirlar.append("/bakimlar geciken ve bu haftaki periyodik bakımlar")
     satirlar += [
         "/gizlilik neyin saklandığı ve nereye gittiği",
         "/cikis bu sohbetin bağlantısını kaldırır",
@@ -234,6 +238,55 @@ def _kisalt(metin: str, sinir: int) -> str:
     return metin if len(metin) <= sinir else metin[: sinir - 1].rsplit(" ", 1)[0] + "…"
 
 
+def _bakim_satiri(b: dict) -> str:
+    return (
+        f"• <b>{_kacir(b['makine_kodu'])}</b> {_kacir(b['makine_adi'])} ({_kacir(b['hat'])}): "
+        f"{_kacir(b['bakim'])}, {periyodik.kalan_metni(b['kalan_gun'])}"
+        + (" · iş emri açık" if b["acik_is_emri"] else "")
+    )
+
+
+def periyodik_listesi(bakimlar: list[dict], bugun: date) -> str:
+    """/bakimlar: geciken ve önümüzdeki YAKLASMA_GUN gündeki periyodik bakımlar."""
+    gecikmis = [b for b in bakimlar if b["durum"] == "gecikti"]
+    yaklasan = [b for b in bakimlar if b["durum"] == "yaklasiyor"]
+    satirlar = [f"<b>Periyodik bakımlar</b> ({bugun:%d.%m.%Y})"]
+    if gecikmis:
+        satirlar += ["", f"▼ <b>Geciken ({len(gecikmis)})</b>", *map(_bakim_satiri, gecikmis)]
+    if yaklasan:
+        satirlar += [
+            "",
+            f"◆ <b>Önümüzdeki {periyodik.YAKLASMA_GUN} gün ({len(yaklasan)})</b>",
+            *map(_bakim_satiri, yaklasan),
+        ]
+    if not gecikmis and not yaklasan:
+        satirlar.append(
+            f"Geciken ya da önümüzdeki {periyodik.YAKLASMA_GUN} günde vadesi gelen bakım yok."
+        )
+    satirlar += ["", '<i>Yapılan bakım web arayüzünde "Yapıldı" ile kaydedilir.</i>']
+    return "\n".join(satirlar)
+
+
+def sabah_ozeti(bakimlar: list[dict], bugun: date) -> str | None:
+    """Bakım rolüne sabah giden liste: geciken ve bugün vadesi gelen bakımlar, bu haftanın
+    sayısı. Hiçbiri yoksa None (boş mesaj gönderilmez)."""
+    gecikmis = [b for b in bakimlar if b["durum"] == "gecikti"]
+    bugunku = [b for b in bakimlar if b["kalan_gun"] == 0]
+    hafta = [b for b in bakimlar if 0 < b["kalan_gun"] <= periyodik.YAKLASMA_GUN]
+    if not (gecikmis or bugunku or hafta):
+        return None
+    satirlar = [f"🛠 <b>Bugünün periyodik bakımları</b> ({bugun:%d.%m.%Y})"]
+    if gecikmis:
+        satirlar += ["", f"▼ <b>Geciken ({len(gecikmis)})</b>", *map(_bakim_satiri, gecikmis)]
+    if bugunku:
+        satirlar += ["", f"◆ <b>Bugün ({len(bugunku)})</b>", *map(_bakim_satiri, bugunku)]
+    if not gecikmis and not bugunku:
+        satirlar.append("Bugün vadesi gelen ya da geciken bakım yok.")
+    if hafta:
+        satirlar += ["", f"Bu hafta {len(hafta)} bakım daha var: /bakimlar"]
+    return "\n".join(satirlar)
+
+
 def rapor_ozeti(r: dict) -> str:
     """Vardiya raporunun Telegram'a sığan özeti (tamamı web arayüzünde)."""
     f = r["fabrika"]
@@ -346,6 +399,7 @@ class Bot:
             "/rapor": lambda: self._rapor(chat_id, kullanici),
             "/oee": lambda: self._oee(chat_id, arguman),
             "/plan": lambda: self._plan(chat_id, kullanici, arguman),
+            "/bakimlar": lambda: self._bakimlar(chat_id, kullanici),
         }
         if komut:
             eylem = komutlar.get(komut)
@@ -523,8 +577,12 @@ class Bot:
             kapasite = 16
         plan = bakim_plani.bakim_plani(self.conn, self.simdi(), kapasite_saat=kapasite)
         satirlar = [f"<b>Bu haftanın bakım planı</b> ({kapasite} saat)"]
+        if plan["periyodik_saat"]:
+            satirlar += [f"Geciken periyodik bakımlar önce: {plan['periyodik_saat']} saat", ""]
         for r in (r for r in plan["makineler"] if r["secildi"]):
             not_ = " · şu an arızalı, tamirden sonra" if r["su_an_arizali"] else ""
+            if r["zorunlu"]:
+                not_ += " · ▼ " + _kacir(", ".join(r["gecikmis_bakimlar"]))
             satirlar.append(
                 f"• <b>{r['makine_kodu']}</b> {_kacir(r['makine_adi'])} ({r['hat']}): "
                 f"{r['bakim_saat']} sa, arıza olasılığı %{r['ariza_olasiligi'] * 100:.0f}, "
@@ -535,6 +593,51 @@ class Bot:
             f"~{plan['onlenen_durus_dk']:.0f} dk. Ayrıntılar web arayüzünde."
         )
         self._gonder(chat_id, "\n".join(satirlar))
+
+    def _bakimlar(self, chat_id: int, kullanici: Kullanici) -> None:
+        if kullanici.rol != "bakim":
+            return self._gonder(
+                chat_id, "Periyodik bakım listesi yalnızca bakım mühendislerine açık."
+            )
+        bugun = self.simdi().astimezone(TZ).date()
+        self._gonder(chat_id, periyodik_listesi(periyodik.bakimlari_getir(self.conn, bugun), bugun))
+
+    # --- Sabah özeti ---------------------------------------------------------------------
+
+    def sabah_ozetini_gonder(self, saat: gun_saati) -> int:
+        """Her gün `saat`ten sonraki ilk turda bakım rolündeki herkese geciken ve o günün
+        periyodik bakımlarını gönderir; gönderilen mesaj sayısını döner. Gün başına bir kez:
+        gönderildiği veritabanında işaretlenir, bot yeniden başlasa da tekrar gitmez. Bot
+        OZET_SON_SAAT'ten sonra açıldıysa o günün özeti gönderilmez."""
+        simdi = self.simdi().astimezone(TZ)
+        if not saat <= simdi.time() < OZET_SON_SAAT:
+            return 0
+        bugun = simdi.date()
+        # Önce işaret, sonra gönderim: gönderim yarıda kesilirse tekrar değil eksik özet.
+        if (
+            self.conn.execute(
+                "INSERT INTO telegram_ozetleri (tur, gun) VALUES ('periyodik_bakim', %s) "
+                "ON CONFLICT DO NOTHING RETURNING gun",
+                [bugun],
+            ).fetchone()
+            is None
+        ):
+            return 0
+        metin = sabah_ozeti(periyodik.bakimlari_getir(self.conn, bugun), bugun)
+        if metin is None:
+            return 0
+        alicilar = self.conn.execute(
+            "SELECT b.chat_id FROM telegram_baglantilari b JOIN kullanicilar k "
+            "USING (kullanici_adi) WHERE k.rol = 'bakim' ORDER BY b.chat_id"
+        ).fetchall()
+        gonderilen = 0
+        for (chat_id,) in alicilar:
+            try:
+                self._gonder(chat_id, metin)
+                gonderilen += 1
+            except TelegramHatasi:
+                pass  # kullanıcı botu engellemiş olabilir; diğerlerine devam
+        return gonderilen
 
     # --- Arıza bildirimi ---------------------------------------------------------------
 

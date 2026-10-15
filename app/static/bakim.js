@@ -71,9 +71,17 @@ export function bakimEkrani({ api, eleman }) {
   function ciz(p) {
     $("plan-icerik").hidden = false;
     const secilen = p.makineler.filter((r) => r.secildi);
+    const zorunlu = p.makineler.filter((r) => r.zorunlu);
     const fark = p.onlenen_durus_dk - p.acgozlu_onlenen_durus_dk;
     $("plan-ozet").replaceChildren(
       ozetKarti("Seçilen makine", String(secilen.length), `${p.secilen_saat} / ${p.kapasite_saat} saat kullanıldı`),
+      ozetKarti(
+        "Geciken periyodik bakım",
+        String(zorunlu.length),
+        zorunlu.length
+          ? `Plana önce girdi: ${p.periyodik_saat} saat${zorunlu.some((r) => !r.secildi) ? " (kapasite hepsine yetmedi)" : ""}`
+          : "Geciken bakım yok",
+      ),
       ozetKarti(
         "Önlenmesi beklenen duruş",
         `${SAYI.format(p.onlenen_durus_dk)} dk`,
@@ -117,6 +125,10 @@ export function bakimEkrani({ api, eleman }) {
         const rozet = eleman("span", "rozet arizali", "şu an arızalı");
         rozet.title = "Olasılık tamirden sonrası için; bakım tamirle birlikte yapılır";
         makine.append(rozet);
+      }
+      if (r.zorunlu) {
+        // Geciken periyodik bakım plana önce girer; hangisi olduğu satırda yazılı.
+        makine.append(eleman("span", "kucuk blok dusus", `▼ Periyodik: ${r.gecikmis_bakimlar.join(", ")}`));
       }
       const model = eleman("td", null, modelMetni(r));
       if (r.olabilirlik_orani != null) {

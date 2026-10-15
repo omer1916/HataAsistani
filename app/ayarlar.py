@@ -1,5 +1,6 @@
 """Uygulama ayarları. Önce ortam değişkenlerine, yoksa proje kökündeki .env dosyasına bakılır."""
 
+from datetime import time
 from pathlib import Path
 from typing import Literal
 
@@ -40,6 +41,8 @@ class Ayarlar(BaseSettings):
     telegram_bildirim_ayrintisi: Literal["ayrintili", "kisa"] = "ayrintili"
     # Telegram'dan gelen talep fotoğrafları bu kadar gün sonra silinir.
     telegram_fotograf_saklama_gun: int = Field(90, ge=1)
+    # Bakım rolüne her sabah geciken ve o günün periyodik bakımları (Europe/Istanbul saati).
+    telegram_bakim_ozeti_saati: time = time(7, 30)
 
 
 def ayarlar() -> Ayarlar:

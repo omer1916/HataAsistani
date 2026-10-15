@@ -1,9 +1,10 @@
 services:
   db:
     image: pgvector/pgvector:pg17
-    # Docker açılınca (ör. bilgisayar yeniden başlayınca) kendiliğinden başlasın; elle
-    # durdurulursa (docker compose stop) kapalı kalır.
-    restart: unless-stopped
+    # Docker her açıldığında kendiliğinden başlasın. "unless-stopped" yetmiyor: Docker Desktop
+    # kapanırken konteynerleri kendisi durdurur ve unless-stopped bunları bir sonraki açılışta
+    # başlatmaz. Kapatmak için: docker compose --profile telegram down (veriler volume'da kalır).
+    restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-andon}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-andon}
@@ -25,7 +26,7 @@ services:
   # Yalnızca veritabanı gerekiyorsa (yerel geliştirme): docker compose up -d db
   api:
     build: .
-    restart: unless-stopped
+    restart: always
     depends_on:
       db:
         condition: service_healthy
@@ -59,7 +60,20 @@ services:
     # veritabanı kopmalarını kendisi yeniden dener. Açılışta Telegram'a ya da veritabanına
     # ulaşamazsa (bilgisayar internetsiz açıldı, token yok) çıkar ve Docker artan aralıklarla
     # (en fazla dakikada bir) yeniden başlatır; sebebi günlükte yazar.
-    restart: unless-stopped
+    restart: always
+    # İmajın sağlık denetimi API'nin portuna bakar; bot HTTP sunmaz. Bot ana döngüsünün her
+    # turunda bir nabız dosyasına dokunur (en geç ~30 sn); 90 sn dokunmadıysa döngü takılmış ya da
+    # Telegram'a/veritabanına ulaşamıyordur ve konteyner "unhealthy" görünür.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, sys, tempfile, time; p = os.path.join(tempfile.gettempdir(), 'hata-asistani-bot.nabiz'); sys.exit(time.time() - os.path.getmtime(p) > 90)"
+      interval: 30s
+      timeout: 5s
+      start_period: 180s
+      retries: 2
     volumes:
       - model-onbellegi:/model-onbellegi
 

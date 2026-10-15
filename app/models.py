@@ -266,6 +266,11 @@ class MakineRiski(BaseModel):
     onlenebilirlik: float = Field(description="Bakımın önleyebileceği arıza payı (varsayım)")
     kazanc_dk: float = Field(description="Bakım yapılırsa önlenmesi beklenen duruş")
     bakim_saat: int
+    gecikmis_bakimlar: list[str] = Field(
+        description="Geciken periyodik bakımlar, örn. 'Yıllık bakım (12 gün gecikti)'"
+    )
+    gecikme_gun: int | None = Field(description="En çok geciken periyodik bakımın gecikmesi")
+    zorunlu: bool = Field(description="Geciken periyodik bakımı var; kapasite önce buna ayrılır")
     secildi: bool
 
 
@@ -275,11 +280,71 @@ class BakimPlani(BaseModel):
     ufuk_gun: int
     kapasite_saat: int
     secilen_saat: int
+    periyodik_saat: int = Field(description="Seçilenlerden geciken periyodik bakımlara ayrılan")
     onlenen_durus_dk: float = Field(description="Seçilen makinelerin kazançlarının toplamı")
     acgozlu_onlenen_durus_dk: float = Field(
         description="Karşılaştırma: değer/süre oranına göre açgözlü seçimin kazancı"
     )
     makineler: list[MakineRiski] = Field(description="Önce seçilenler, sonra kazanca göre")
+
+
+PeriyodikDurum = Literal["gecikti", "yaklasiyor", "zamaninda"]
+
+
+class PeriyodikBakim(BaseModel):
+    plan_id: int
+    makine_kodu: str = Field(examples=["P3-HP"])
+    makine_adi: str
+    hat: str
+    bakim: str = Field(examples=["Yıllık bakım"])
+    aralik_gun: int
+    sure_saat: int = Field(description="Tahmini süre")
+    yapilacaklar: str
+    dokuman_kodu: str | None = Field(description="Aralığın geldiği kılavuz; yoksa takvim yok")
+    sayfa: int | None
+    bolum: str | None
+    son_bakim: date
+    kayitli: bool = Field(
+        description="Son bakım bir iş emrinden; false ise sisteme geçmeden önceki kayıt"
+    )
+    son_yapan: str | None
+    acik_is_emri: bool = Field(description="Bu bakım için kapanmamış bir iş emri var")
+    siradaki: date
+    kalan_gun: int = Field(description="Sıradaki bakıma kalan gün; eksiyse gecikme")
+    durum: PeriyodikDurum
+
+
+class PeriyodikBakimListesi(BaseModel):
+    bugun: date
+    yaklasma_gun: int = Field(description="Bu kadar gün içindeki bakım 'yaklaşıyor' sayılır")
+    gecikmis: int
+    yaklasan: int
+    bakimlar: list[PeriyodikBakim] = Field(description="En çok geciken önce")
+
+
+class PeriyodikBakimFiltresi(BaseModel):
+    """`GET /periyodik-bakim` sorgu parametreleri."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    hat: NulsuzMetin | None = Field(None, description="Hat adı", examples=["Pres 3"])
+    makine: NulsuzMetin | None = Field(
+        None, max_length=20, description="Makine kodu", examples=["P3-HP"]
+    )
+
+
+class BakimYapildi(BaseModel):
+    """`POST /periyodik-bakim/{plan_id}/yapildi` gövdesi."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tarih: date | None = Field(None, description="Yapıldığı gün; boşsa bugün. İleri gün olamaz.")
+    sure_saat: float | None = Field(
+        None, ge=0.5, le=24, description="Süren saat; boşsa planın tahmini süresi"
+    )
+    aciklama: NulsuzMetin | None = Field(
+        None, max_length=500, description="Yapılan işler, bulgular", examples=["Conta seti değişti"]
+    )
 
 
 class AramaIstegi(BaseModel):
