@@ -438,7 +438,7 @@ sertifikalı ve şifreli (Basic256Sha256), MQTT TLS ve parolalı çalıştırıl
 ### Nasıl test edildi
 
 Varsayılan test takımı her CI'da çalışır; `HA_YOGUN=1` aynı testleri büyütür. Yoğun turun sonucu
-(YOGUN_SURE, YOGUN_ADET testin hepsi geçti):
+(45 dk 51 sn, 556 testin hepsi geçti):
 
 | Test | Ne yapıldı | Sonuç |
 |---|---|---|
