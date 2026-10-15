@@ -220,7 +220,7 @@ def kapak() -> str:
   <div class="esin"><b>Isıtmalı Güneş Bankı ile bağlantısı:</b> bankın "bozulunca kendisi haber
     veren" arıza takip sistemi bu projedeki fikirden doğdu: arızayı kayda geçir, doğru kişiye
     hemen bildir, ne yapılacağını kaynağıyla söyle.</div>
-  <div class="kapak-ekip"><b>Ömer Daştan</b><span>Bursa Teknik Üniversitesi · github.com/omer1916/andon</span></div>
+  <div class="kapak-ekip"><b>Ömer Daştan</b><span>Bursa Teknik Üniversitesi · github.com/omer1916/HataAsistani</span></div>
 </section>"""
 
 
@@ -355,7 +355,7 @@ def panolar_ve_olcumler() -> str:
   </div>
   <p class="kucuk">Teknolojiler: Python, FastAPI, PostgreSQL + pgvector, Google Gemini, OPC UA,
     Modbus, MQTT, MTConnect, Telegram Bot API, Docker. Kod ve ölçümlerin ayrıntısı:
-    github.com/omer1916/andon</p>
+    github.com/omer1916/HataAsistani</p>
   {alt_not(4)}
 </section>"""
 

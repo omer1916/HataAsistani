@@ -57,8 +57,8 @@ açmayı sağlar. Ayrıntılar ve veri gizliliği: [Telegram botu](#telegram-bot
 
 > **Adı ve logosu:** Proje, fabrikalarda bir hatta sorun olduğunda yanan yeşil-sarı-kırmızı
 > uyarı ışığı sisteminden, *Andon*'dan esinlendi; panellerdeki durum renkleri buradan geliyor.
-> Kod deposunun adı bu yüzden `andon`. Logo adın baş harfleri: H'nin sağ ayağı A'nın sol ayağı,
-> A'nın içindeki sarı üçgen bir uyarı işareti. Sekme ikonunda aynı harfler konuşma balonunda.
+> Depo ilk olarak `andon` adıyla açıldı; klasör ve paket adlarında bu ad sürüyor. Logo adın baş
+> harfleri: H'nin sağ ayağı A'nın sol ayağı, A'nın içindeki sarı üçgen bir uyarı işareti. Sekme ikonunda aynı harfler konuşma balonunda.
 > **Bu projedeki bütün veriler ve kılavuzlar kurgusaldır**; gerçek bir firmaya veya ekipmana ait
 > değildir.
 
@@ -768,13 +768,13 @@ hover durumları yalnızca fareli cihazlarda. Tarayıcıdaki denemede vardiya ra
 yoktu, model bunu yazınca doğru yorum reddediliyordu; eşik veriye eklendi.
 
 Her iş kendi branch'inde geliştirildi ve pull request ile birleştirildi:
-[#1 iskelet](https://github.com/omer1916/andon/pull/1) ·
-[#2 veritabanı](https://github.com/omer1916/andon/pull/2) ·
-[#3 API](https://github.com/omer1916/andon/pull/3) ·
-[#4 RAG](https://github.com/omer1916/andon/pull/4) ·
-[#5 agent](https://github.com/omer1916/andon/pull/5) ·
-[#6 güvenlik ve kalite](https://github.com/omer1916/andon/pull/6) ·
-[#7 arayüz](https://github.com/omer1916/andon/pull/7)
+[#1 iskelet](https://github.com/omer1916/HataAsistani/pull/1) ·
+[#2 veritabanı](https://github.com/omer1916/HataAsistani/pull/2) ·
+[#3 API](https://github.com/omer1916/HataAsistani/pull/3) ·
+[#4 RAG](https://github.com/omer1916/HataAsistani/pull/4) ·
+[#5 agent](https://github.com/omer1916/HataAsistani/pull/5) ·
+[#6 güvenlik ve kalite](https://github.com/omer1916/HataAsistani/pull/6) ·
+[#7 arayüz](https://github.com/omer1916/HataAsistani/pull/7)
 
 Claude Code ile çalışırken kullanılan güvenlik ve tasarım araçları (Strix skill'leri, tasarım
 skill'leri, önerilen plugin'ler, CodeQL, Dependabot) ve Strix ile uygulamanın nasıl
