@@ -4,6 +4,7 @@ import { guvenliMarkdown } from "./metin.js";
 import { oeeEkrani } from "./oee.js";
 import { bakimEkrani } from "./bakim.js";
 import { periyodikEkrani } from "./periyodik.js";
+import { makineEkrani } from "./makine.js";
 import { raporEkrani } from "./rapor.js";
 import { telegramPenceresi } from "./telegram.js";
 
@@ -38,6 +39,7 @@ const EKRANLAR = {
   rapor: "rapor-ekrani",
   plan: "plan-ekrani",
   periyodik: "periyodik-ekrani",
+  makine: "makine-ekrani",
 };
 
 // Açık ekran adreste tutulur (#oee, #rapor...): sayfa yenilenince ya da bağlantı
@@ -53,6 +55,7 @@ let aktifEkran = adresinEkrani() ?? "sohbet";
 const rapor = raporEkrani({ api, eleman, rol: () => oturum?.rol });
 const bakim = bakimEkrani({ api, eleman });
 const periyodik = periyodikEkrani({ api, eleman, pdfAc });
+const makine = makineEkrani({ api, eleman });
 const telegram = telegramPenceresi({ api });
 const oee = oeeEkrani({
   api,
@@ -85,6 +88,7 @@ function oturumuYaz(yeni) {
 
 function cikisYap(mesaj) {
   oturumuYaz(null);
+  makine.gizle();
   $("mesajlar").replaceChildren();
   aktifEkran = "sohbet";
   ekraniGoster();
@@ -151,6 +155,8 @@ function ekranSec(ad) {
   if (ad === "rapor") rapor.goster();
   if (ad === "plan") bakim.goster();
   if (ad === "periyodik") periyodik.goster();
+  if (ad === "makine") makine.goster();
+  else makine.gizle(); // başka ekrana geçince yenilemeyi durdur
 }
 
 for (const sekme of $("sekmeler").querySelectorAll(".sekme")) {

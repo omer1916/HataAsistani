@@ -77,6 +77,56 @@ services:
     volumes:
       - model-onbellegi:/model-onbellegi
 
+  # Makine entegrasyonu demosu (isteğe bağlı): docker compose --profile entegrasyon up -d
+  # Pres 3 hattının PLC'si gibi davranan OPC UA sunucusu ve onu dinleyip API'ye alarm gönderen
+  # bağlayıcı. .env'de SIMULATOR_ANAHTARI gerekir: API açılışta "simulator" kaynağını bu
+  # anahtarla kurar, bağlayıcı aynı anahtarla gönderir. Alarm vermek için:
+  #   docker compose exec plc-simulatoru python -m entegrasyon.simulator alarm P3-HP A101
+  plc-simulatoru:
+    build:
+      context: .
+      dockerfile: Dockerfile.entegrasyon
+    profiles: [entegrasyon]
+    command: ["python", "-m", "entegrasyon.simulator", "sunucu"]
+    restart: always
+    # Bilgisayardaki bir OPC UA istemcisiyle (ör. UaExpert) bakılabilsin; yalnızca bu makineden.
+    ports:
+      - "127.0.0.1:${OPCUA_PORT:-4840}:4840"
+
+  baglayici:
+    build:
+      context: .
+      dockerfile: Dockerfile.entegrasyon
+    profiles: [entegrasyon]
+    depends_on:
+      api:
+        condition: service_healthy
+      plc-simulatoru:
+        condition: service_started
+    environment:
+      HATA_ASISTANI_ADRESI: http://api:8000
+      OPCUA_ADRESI: opc.tcp://plc-simulatoru:4840/hata-asistani/
+      # Boşsa bağlayıcı açıklayıcı bir mesajla çıkar (zorunlu değişken compose'u bütünüyle bozardı).
+      ENTEGRASYON_ANAHTARI: ${SIMULATOR_ANAHTARI:-}
+      KUYRUK_DOSYASI: /veri/kuyruk.sqlite
+      NABIZ_DOSYASI: /tmp/baglayici.nabiz
+    restart: always
+    # Nabız, OPC UA bağlantısı canlıyken en geç birkaç saniyede bir güncellenir; PLC'ye
+    # ulaşılamıyorsa konteyner "unhealthy" görünür.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, sys, time; sys.exit(time.time() - os.path.getmtime('/tmp/baglayici.nabiz') > 30)"
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 2
+    volumes:
+      - baglayici-kuyrugu:/veri
+
 volumes:
   pgdata:
   model-onbellegi:
+  baglayici-kuyrugu:

@@ -45,6 +45,10 @@ bakım tanımlıdır. "Yapıldı" ile tarih, süre ve not girilir; plana bağlı
 açılır ve sıradaki tarih kendiliğinden kayar. Asistana "hangi bakımlar gecikti?", "P3-HP'nin son
 bakımı ne zaman?" diye sorulabilir; bakım ekibine her sabah Telegram'dan liste gider.
 
+**Makine entegrasyonu** bir PLC ya da CNC alarm verdiğinde arızayı kimse yazmadan açar ve alarm
+bitince kapatır; bildirim saniyeler içinde Telegram'a gider. Makineler OPC UA ile bağlanır, başka
+sistemler aynı API'ye olay gönderir. Ayrıntılar: [Makine entegrasyonu](#makine-entegrasyonu).
+
 **Telegram botu** (isteğe bağlı) hat durduğunda bakım ekibine kılavuzdaki ilk adım ve yedek
 parça durumuyla anında bildirim gönderir; sahadan soru sormayı ve fotoğrafla bakım talebi
 açmayı sağlar. Ayrıntılar ve veri gizliliği: [Telegram botu](#telegram-botu).
@@ -69,7 +73,7 @@ açmayı sağlar. Ayrıntılar ve veri gizliliği: [Telegram botu](#telegram-bot
 
 ```mermaid
 flowchart LR
-    K["Tarayıcı<br/>(vanilla JS)"] -->|JWT| API["FastAPI<br/>/chat · /ara · /arizalar<br/>/oee · /rapor/vardiya · /bakim-plani<br/>/periyodik-bakim"]
+    K["Tarayıcı<br/>(vanilla JS)"] -->|JWT| API["FastAPI<br/>/chat · /ara · /arizalar<br/>/oee · /rapor/vardiya · /bakim-plani<br/>/periyodik-bakim · /entegrasyon"]
     API --> AG["Agent döngüsü<br/>(en fazla 6 adım)"]
     AG <-->|"araç çağrıları"| LLM["Gemini / Ollama<br/>OpenAI uyumlu API"]
     AG --> T1["ariza_say · oee_hesapla · bakim_plani_oner<br/>stok_sorgula · bakim_talebi_olustur"]
@@ -107,7 +111,8 @@ http://localhost:8000/docs adresindedir.
 | Güvenlik | JWT (PyJWT), argon2 (pwdlib) |
 | Arayüz | HTML, CSS, vanilla JavaScript (dış bağımlılık yok) |
 | Telegram | Bot API, httpx ile ince istemci, uzun yoklama (dışarıya açık adres gerekmez) |
-| Kalite | pytest (2666 test), Hypothesis, ruff, GitHub Actions |
+| Makine entegrasyonu | OPC UA (asyncua), PostgreSQL LISTEN/NOTIFY, SQLite kuyruklu bağlayıcı |
+| Kalite | pytest (2812 test), Hypothesis, ruff, GitHub Actions |
 | Çalıştırma | Docker Compose |
 
 ## Telegram botu
@@ -283,6 +288,112 @@ incelemesi, testlerin geçtiği hâlde şu hataları buldu:
 Her biri için test yazıldı ve düzeltme geri alınınca testin kırıldığı tek tek denendi (12
 mutasyonun 12'si yakalandı; çakışan işaretleri ilk denemede yakalayamayan Hypothesis testi,
 rastgele karakter yerine Markdown parçalarından metin üretecek şekilde güçlendirildi).
+
+## Makine entegrasyonu
+
+Bir makine (PLC, CNC) alarm verdiğinde Hata Asistanı bunu kimse yazmadan arıza olarak kaydeder:
+Telegram bildirimi anında gider, kılavuzdaki ilgili bölüm ve stok mesaja eklenir, arıza
+raporlara, OEE'ye ve bakım planına girer, **Makineler** ekranında canlı görünür. Alarm bitince
+arıza kendiliğinden kapanır. Hata Asistanı belirli bir markaya ya da protokole bağlı değildir:
+her sistem aynı kapıdan, aynı biçimde olay gönderir.
+
+```mermaid
+flowchart LR
+    PLC["PLC / CNC<br/>(OPC UA)"] -->|"alarm değişimi"| BAG["Bağlayıcı<br/>entegrasyon/<br/>diskteki kuyruk"]
+    BAG -->|"POST /entegrasyon/olaylar<br/>X-API-Anahtari"| API["Hata Asistanı API"]
+    MES["MES / ERP / başka sistem"] -->|"aynı uç nokta"| API
+    API -->|"arıza aç · ekle · kapat"| PG[("PostgreSQL")]
+    PG -->|"NOTIFY (tetikleyici)"| BOT["Telegram botu"]
+    PG --> EKRAN["Makineler ekranı<br/>raporlar · bakım planı"]
+```
+
+**Kurallar** (`app/entegrasyon.py`):
+
+- Aynı olay (aynı `olay_id`) ikinci kez gelirse yeniden işlenmez, ilk sonucu döner; bağlayıcı emin
+  olamadığı her olayı güvenle yeniden gönderir.
+- Aynı makinedeki birden çok alarm tek arızada toplanır (bir duruş, birkaç alarm); hattı durduran
+  bir alarm eklenince arıza "hat durdu"ya, önemi en yükseğe çıkar. Son alarm bitince arıza kapanır.
+- Alarm kapanıp 60 saniye içinde geri gelirse aynı arıza yeniden açılır: titreşen bir sensör her
+  seferinde yeni arıza ve yeni Telegram mesajı üretmez. Hattı durdurmayan bir arıza durduran bir
+  alarmla geri gelirse yeniden açılmaz, yeni arıza açılır (bildirim gitsin).
+- Ağda sıra karışıp bitiş başlangıçtan önce gelirse saklanır, başlangıç gelince eşleşir.
+- Tip, önem ve hattı durdurup durdurmadığı sırasıyla olaydan, kaynağın **alarm kataloğundan**
+  (tam kod, sonra en uzun önek; ör. Fanuc'un `SV*` servo alarmları) ya da kaynağın
+  varsayılanlarından gelir. Eşlenmemiş kod da kaydedilir, açıklamasında belirtilir.
+- Makinenin saati ileriyse olay şimdiye çekilir, 30 günden eski olay reddedilir. Aynı makinenin
+  olayları sırayla işlenir (veritabanı kilidi): aynı anda gelen olaylar çift arıza açamaz.
+
+Hazır katalog `pres-paneli`: pres operatör panelinin A101-A501 kodları, PRES-BK-01'deki anlamları
+ve bölümlerinin sayfasıyla (A101 → s. 5 "Hidrolik basınç düşüklüğü"). Telegram mesajındaki kılavuz
+alıntısı bu kodla bulunur.
+
+### Gerçek bir makineyi bağlamak
+
+1. Kaynak ekleyip anahtarını al (anahtar bir kez gösterilir, veritabanında özeti saklanır):
+   ```bash
+   python -m scripts.entegrasyon kaynak-ekle cnc-01 "Fanuc 0i torna" --katalog fanuc
+   python -m scripts.entegrasyon katalog-ekle fanuc "SV*" "Servo alarmı" elektrik yuksek
+   ```
+2. Makinenin OPC UA sunucusunda (Siemens S7-1500, Beckhoff, Fanuc OPC UA seçeneği) ya da bir ağ
+   geçidinde (Kepware, Node-RED) alarmları `Objects/<makine kodu>/Alarmlar/<alarm kodu>` (bool)
+   olarak yayınla. Bağlayıcı makineleri ve alarmları bağlanınca kendisi bulur.
+3. Bağlayıcıyı makinelerin ağında çalıştır (`Dockerfile.entegrasyon`, yalnızca asyncua ve httpx):
+   `ENTEGRASYON_ANAHTARI`, `OPCUA_ADRESI`, `HATA_ASISTANI_ADRESI` ortam değişkenleriyle
+   `python -m entegrasyon.baglayici`. Bağlayıcı makineye yalnızca okumak için bağlanır.
+4. OPC UA konuşmayan sistemler (MES, MTConnect, Modbus, MQTT ağ geçidi) aynı uç noktaya doğrudan
+   gönderebilir:
+   ```bash
+   curl -X POST http://127.0.0.1:8000/entegrasyon/olaylar -H "X-API-Anahtari: ha_..." \
+     -H "Content-Type: application/json" -d '{"olaylar": [{"olay_id": "cnc-01:SV0401:1:1792053221",
+     "tur": "alarm_basladi", "makine_kodu": "P3-HP", "alarm_kodu": "SV0401",
+     "zaman": "2026-10-15T11:36:18+03:00"}]}'
+   ```
+   Cevap her olay için ayrıdır (`islendi`, `tekrar`, `gecersiz`, `hata`) ve hangi arızanın
+   açıldığını söyler. Ayrıntılı şema: `/docs`.
+
+**Bağlayıcının garantileri** (`entegrasyon/`): olaylar SQLite kuyruğunda bekler ve ancak API kabul
+edince silinir; API kapalıyken de bağlayıcı yeniden başladığında da kaybolmaz (en az bir kez
+teslim, API tarafında tam bir kez etki). Ağ hatası ve 5xx'te artan aralıklarla, 429'da API'nin
+istediği kadar bekler; tek tek reddedilen bozuk olayı günlüğe yazıp atar (kuyruk tıkanmaz). OPC UA
+bağlantısı koparsa yeniden bağlanır; bağlanınca süren alarmları bildirir ve API'deki süren
+alarmlarla uzlaşır: bağlantı yokken biten alarm için "bitti" gönderir.
+
+**Güvenlik:** kaynak başına anahtar (özeti saklanır, kapatılabilir, yenilenebilir); kullanıcı
+token'ı olay gönderemez, kaynak anahtarı kullanıcı uç noktalarını açamaz. Kaynak başına hız
+sınırı (saniyede 200 olay, alarm fırtınası API'yi ve botu boğmasın) ve 1 MB gövde sınırı (aşan
+istek uygulamaya ulaşmadan reddedilir). Demo simülatörü şifresizdir; gerçek kurulumda OPC UA
+sertifikalı ve şifreli (Basic256Sha256) çalıştırılır.
+
+### Nasıl test edildi
+
+Varsayılan test takımı her CI'da çalışır; `HA_YOGUN=1` aynı testleri büyütür. Yoğun turun sonucu
+(30 dk 41 sn, 210 testin hepsi geçti):
+
+| Test | Ne yapıldı | Sonuç |
+|---|---|---|
+| Durum makinesi | 2.279 rastgele olay dizisi, toplam **128.533 olay** (başla, bitir, aynı olayı yeniden gönder, bitişi önce gönder, arızayı elle kapat; zamanlar 60 sn sınırının çevresinde). Her adımda veritabanı, kuralları saf Python'la yeniden yazan bağımsız modelle alan alan karşılaştırıldı | Fark yok |
+| Eşzamanlılık | 40 tur × 3 senaryo: aynı alarm, farklı alarmlar ve aynı olay kimliği 8 iş parçacığından aynı anda; 12 iş parçacığıyla 6.000 olay, üçte biri yeniden gönderildi | Çift arıza, kayıp ya da yarım kalmış olay yok |
+| Bozuk girdi | 3.000 rastgele JSON gövdesi; NaN, Infinity, eşi olmayan vekil karakter, kapanmamış JSON, 10.000 düzey iç içe gövde | Hiç 500 yok |
+| Uçtan uca | Gerçek OPC UA sunucusu, bağlayıcı ve API; 6 tohum × 3.000 alarm değişimi milisaniyeler arayla | Her seferinde veritabanındaki süren alarmlar PLC'dekiyle aynı; bağlayıcı yeniden başlayınca hiçbir şey değişmedi |
+
+Bozuk girdi testi gerçek bir hata buldu: JSON'daki eşi olmayan vekil karakter (`"\ud800"`)
+FastAPI'nin 422 cevabında girdiyi geri yazdığı için cevap UTF-8'e çevrilemiyor, bütün uç noktalar
+500 dönüyordu. 422 cevabı artık karakteri temizleyerek yazıyor.
+
+### Demo: PLC simülatörü
+
+`entegrasyon/simulator.py`, Pres 3 hattının PLC'si gibi davranan bir OPC UA sunucusudur
+(P3-HP'nin sekiz, P3-RB ve P3-TR'nin birer alarmı).
+
+```bash
+# .env'e bir kez: SIMULATOR_ANAHTARI=ha_... (bkz. .env.example)
+docker compose --profile telegram --profile entegrasyon up -d --build
+docker compose exec plc-simulatoru python -m entegrasyon.simulator alarm P3-HP A101
+docker compose exec plc-simulatoru python -m entegrasyon.simulator alarm P3-HP A101 --bitir
+```
+
+Alarmdan saniyeler içinde Telegram'a "Pres 3 durdu" mesajı düşer, Makineler ekranında görünür;
+`--bitir` ile arıza kapanır.
 
 ## Tasarım kararları
 
@@ -512,7 +623,7 @@ Kontroller ve testler:
 
 ```bash
 ruff check . && ruff format --check .
-pytest                                  # 2666 test (~1 dk); veritabanı kapalıysa DB testleri atlanır
+pytest                                  # 2812 test (~3 dk); veritabanı kapalıysa DB testleri atlanır
 ```
 
 Testler gerçek bir PostgreSQL'e karşı çalışır: `andon_test` veritabanı sabit bir tarihle üretilen
@@ -525,15 +636,18 @@ embedder, senaryolu LLM); böylece testler model indirmeden ve API anahtarı olm
 | `test_farkli_yoldan` | 611 | Her hat × ay × arıza tipi, her gün, her stok kodu ve makine için API ve araç sonucu, SQL kullanmadan Python'da hesaplanan sonuçla aynı |
 | `test_oee` | 372 | 40 tohumda vardiya ve duruş kuralları ile OEE desenleri; planlı süre ve arıza duruşu dakika dakika kümelerle yeniden hesaplanıyor; her hat × ay ve rastgele aralıklar için API'nin OEE'si, günlük seyri, Pareto'su ve makine listesi SQL kullanmadan hesaplanan sonuçla aynı |
 | `test_seed_ozellikleri` | 280 | 40 farklı rastgele tohumla üretilen veride şema kuralları ve veri desenleri tutuyor |
-| `test_guvenlik_matrisi` | 305 | Her rol × uç nokta × token türü (süresi dolmuş, yanlış anahtar, `alg: none`, eksik alan, bilinmeyen rol...), yol oynamayla PDF, NUL baytı |
+| `test_guvenlik_matrisi` | 323 | Her rol × uç nokta × token türü (süresi dolmuş, yanlış anahtar, `alg: none`, eksik alan, bilinmeyen rol...), yol oynamayla PDF, NUL baytı |
 | `test_telegram` | 62 | Eşleşmemiş sohbete ve gruplara veri gitmemesi, kodun özetinin saklanması, tek kullanım, süre ve deneme sınırı, silinmiş kullanıcı, rol (operatöre bakım kılavuzu yok), HTML kaçırma ve her girdide doğru iç içe etiket (Hypothesis), düz metne dönüş, soru sınırı, fotoğraflı talep, bildirimin role ve ayara göre içeriği, iki sorgu arasına yazılan ve sonradan hattı durduran arıza, engelleyen kullanıcı, komutlar, saklama süresi, hata sonrası offset, günlüğe içerik sızmaması, Bot API hatalarında token sızmaması |
 | `test_bakim_plani` | 343 | Weibull MLE'nin bilinen parametreleri bulması ve SciPy ile aynı olması, sansürün etkisi, olabilirlik oranı testinin yanlış alarm oranı, sırt çantasının 300 örnekte kaba kuvvetle aynı olması, plan verisinin SQL'siz hesapla aynı olması, 7 kapasitede en iyi seçim, geciken periyodik bakımın önce girmesi, rol ve doğrulama |
 | `test_periyodik` | 33 | Planların kılavuz sayfası ve stok kodları kaynak metinle aynı, son/sıradaki bakım ve durum sınırları (Hypothesis), "Yapıldı" kaydı (geçmiş gün, ileri gün, eski tarih son bakımı geri almıyor), API ve doğrulama, agent aracı ve rol, `/bakimlar` ve sabah özetinin günde bir kez yalnızca bakıma gitmesi, arayüzün tarih metinleri (Node ile) |
+| `test_entegrasyon` | 47 | Her kural tek tek: aç, kapat, tekrar, aynı duruşa ekleme ve ağırlaştırma, 60 sn içinde yeniden açma, bitişin önce gelmesi, elle kapatılan arıza, saat kayması, bilinmeyen makine; katalogun kılavuzla aynı olması, eşleme sırası, anahtar, hız sınırı, gövde sınırı, API ve yetki, botun bildirimi, komut satırı, arayüz metinleri (Node ile) |
+| `test_entegrasyon_durum` | 47 | Rastgele olay dizileri bağımsız bir modelle karşılaştırılır (Hypothesis durum makinesi); aynı makineye 8 iş parçacığı aynı anda; 1.200 olayın yeniden gönderilerek eşzamanlı yüklenmesi; 300 rastgele JSON ve ham bozuk gövde: hiç 500 yok |
+| `test_baglayici` | 28 | Gerçek OPC UA sunucusu, bağlayıcı ve API birlikte: gecikme, yeniden bağlanma, uzlaşma, API kesintisinde kuyruk, bağlayıcı yeniden başlasa da kalıcı kuyruk, yüzlerce hızlı alarm değişiminden sonra aynı durum; göndericinin her HTTP cevabı |
 | `test_rapor` | 59 | Sayı denetimi (Türkçe/İngilizce yazım, uydurma fark ve hedef), 15 vardiyada raporun verisi SQL'siz hesapla aynı, kural yorumu da denetimden geçiyor, sahte LLM ile kabul / bir kez düzeltme / iki kez ret / API hatası yolları ve kayıtları |
 | `test_arama_butunlugu` | 118 | Her kılavuz parçası kendi metniyle ilk sırada bulunuyor; operatör 46 bakım parçasının hiçbirine birebir metniyle bile ulaşamıyor |
 | `test_arayuz_metin` | 100 | Arayüzün HTML temizleyicisi (Node ile) 46 XSS yükünde izinli etiket dışında hiçbir şey, hiçbir öznitelik üretmiyor |
 | `test_arac_girdileri` | 79 | LLM'in gönderebileceği bozuk argümanlar, bozuk JSON ve SQL injection denemeleri düzeltilebilir hata dönüyor, veri bozulmuyor |
-| `test_api_dogrulama` | 63 | Geçersiz her istek 422, asla 500 değil |
+| `test_api_dogrulama` | 69 | Geçersiz her istek 422, asla 500 değil; eşi olmayan vekil karakterli JSON da (bu hata bütün API'de 500 veriyordu, entegrasyonun bozuk girdi testinde bulundu) |
 | `test_degerlendirici` | 48 | Değerlendiricinin kendisi: sayı eşleştirme, Türkçe ekler, kaynak ve yetki kontrolü |
 | `test_arayuz_oee` | 20 | OEE panelinin tarih aralıkları (ay ve yıl sınırı, artık yıl), yüzde biçimi ve andon rengi eşikleri (Node ile) |
 | `test_ozellikler` | 10 | Hypothesis ile her biri 300 rastgele girdi: parçalama, token, tarih filtresi, sayı eşleştirme |
@@ -584,6 +698,8 @@ taranacağı: [`docs/claude-araclari.md`](docs/claude-araclari.md).
 | `kullanicilar` | Demo kullanıcılar (argon2 parola hash'i) |
 | `dokumanlar`, `dokuman_parcalari` | Kılavuzlar ve 384 boyutlu vektörleriyle parçaları |
 | `llm_istekleri` | Agent'ın her isteği: token, maliyet, süre, araçlar |
+| `entegrasyon_kaynaklari`, `alarm_katalogu` | Olay gönderen sistemler (anahtar özetiyle) ve alarm kodlarının anlamı; seed'de silinmez |
+| `entegrasyon_olaylari`, `aktif_alarmlar` | Gelen her olay (tekil `olay_id`) ve süren alarmlar ile bağlı oldukları arıza |
 
 Sahte veride bilerek desenler var: Pres 3 en çok arıza veren hat, P3-HP'de son iki ayda hidrolik
 arızalar artıyor, pazar günleri arıza az, beş parça minimum stok seviyesinin altında ve seed
@@ -619,6 +735,7 @@ app/
   planlama.py    sırt çantası: dinamik programlama ve açgözlü karşılaştırma
   bakim_plani.py makine riskleri ve haftalık bakım planı
   periyodik.py   periyodik bakım takibi: son/sıradaki bakım, durum, "Yapıldı" kaydı
+  entegrasyon.py makine alarmlarını arızaya çevirir: kurallar, katalog, anahtarlar, hız sınırı
   telegram_bot.py  Telegram botu: eşleştirme, soru, fotoğraflı talep, bildirim, komutlar
   telegram_api.py  Telegram Bot API istemcisi (token'ı hatalara sızdırmaz)
   tools.py       agent araçları ve JSON şemaları
@@ -627,16 +744,23 @@ app/
   embedding.py   multilingual-e5-small
   auth.py        JWT, roller, parola hash'i
   sorgular.py    SQL sorguları
-  static/        sohbet, OEE paneli, vardiya raporu, bakım planı ve periyodik bakım ekranları
+  static/        sohbet, OEE paneli, vardiya raporu, bakım planı, periyodik bakım ve makine ekranları
+entegrasyon/     makine bağlayıcısı (API'den ayrı süreç; yalnızca asyncua ve httpx)
+  baglayici.py   çalıştırır: OPC UA alarmlarını izler, API'ye gönderir
+  opcua.py       alarm değişimlerini izler, yeniden bağlanır, API'yle uzlaşır
+  gonderici.py   kuyruğu API'ye sırayla, yeniden deneyerek boşaltır
+  kuyruk.py      gönderilmeyi bekleyen olaylar (SQLite, kalıcı)
+  simulator.py   Pres 3 PLC simülatörü (OPC UA sunucusu) ve alarm verme komutu
 scripts/         seed, ingest, kılavuz PDF üretimi, ölçüm ve değerlendirme
   telegram_bot.py    botu çalıştırır (uzun yoklama)
   telegram_prova.py  token olmadan uçtan uca prova (sahte Telegram sunucusu)
   ariza_ekle.py      bildirim denemesi için hattı durduran bir arıza ekler ve bitirir
+  entegrasyon.py     kaynak ekler, anahtar verir, alarm kataloğunu düzenler
 sql/             şema ve referans sorgular
 data/kilavuzlar/ kurgusal kılavuzlar (Markdown kaynak + PDF)
 eval/            arama ve agent değerlendirme setleri
 sunum/           tanıtım PDF'i (Hata-Asistani-Tanitim.pdf) ve onu üreten betikler
-tests/           2666 test
+tests/           2812 test
 ```
 
 Tanıtım PDF'indeki ekran görüntüleri çalışan uygulamadan alınır:
@@ -644,6 +768,14 @@ Tanıtım PDF'indeki ekran görüntüleri çalışan uygulamadan alınır:
 Chrome'u kullanır), ardından `python sunum/pdf_olustur.py`.
 
 ## Bilinen eksikler
+
+- **Makine entegrasyonunda yalnızca OPC UA bağlayıcısı var.** MTConnect, Modbus ve MQTT için
+  bağlayıcı modülü yazılmalı (API ve kurallar hazır; bu sistemler şimdilik bir ağ geçidiyle OPC
+  UA'ya çevrilebilir ya da doğrudan API'ye gönderebilir). Olaylar kaynak başına sırayla gelmeli
+  (bağlayıcı bunu sağlar); sıra karışmasında yalnızca aynı alarmın bitişinin önce gelmesi
+  desteklenir. OPC UA aboneliği 100 ms aralıkla örnekler: daha kısa süren bir alarm hiç
+  görünmeyebilir (son durum yine doğrudur). Hız sınırı API sürecinin belleğinde tutulur (tek
+  süreç varsayımı).
 
 - **Telegram botu soruları tek iş parçacığında cevaplıyor.** LLM bir soruyu cevaplarken (2-4 sn)
   diğer mesajlar sırada bekler (arıza bildirimi ayrı iş parçacığında, beklemez); birkaç kişilik bir ekip için yeterli, büyük bir fabrika için iş kuyruğu

@@ -4,6 +4,7 @@
 Belgeler: http://localhost:8000/docs  (sağ üstteki "Authorize" ile giriş yapılır)
 """
 
+import math
 import threading
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
@@ -14,21 +15,35 @@ from typing import Annotated
 
 import openai
 import psycopg
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, Security, status
 from fastapi import Path as FastAPIPath
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import APIKeyHeader, OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
+from pydantic import TypeAdapter, ValidationError
 
-from app import __version__, agent, bakim_plani, periyodik, rag, rapor, sorgular, telegram_bot
+from app import (
+    __version__,
+    agent,
+    bakim_plani,
+    entegrasyon,
+    periyodik,
+    rag,
+    rapor,
+    sorgular,
+    telegram_bot,
+)
 from app.auth import AktifKullanici, Kullanici, parola_dogrula, rol_gerekli, token_uret
 from app.ayarlar import ayarlar
 from app.db import TZ, havuz_olustur
 from app.embedding import Embedder, TembelEmbedder, varsayilan_embedder
-from app.guvenlik_basliklari import GuvenlikBasliklari
+from app.guvenlik_basliklari import GovdeSiniri, GuvenlikBasliklari
 from app.llm import LLM, LLMAyarHatasi, llm_olustur
 from app.models import (
     VARDIYA_SAATLERI,
+    AktifAlarm,
     AramaIstegi,
     AramaSonucu,
     ArizaFiltresi,
@@ -36,6 +51,11 @@ from app.models import (
     BakimPlani,
     BakimPlaniFiltresi,
     BakimYapildi,
+    EntegrasyonCevabi,
+    EntegrasyonDurumu,
+    EntegrasyonIstegi,
+    EntegrasyonOlayi,
+    EntegrasyonSonucu,
     Hat,
     KullanimOzeti,
     OeeFiltresi,
@@ -336,6 +356,107 @@ def periyodik_bakim_yapildi(
     return sonuc
 
 
+# --- Makine entegrasyonu ---------------------------------------------------------------------
+
+ANAHTAR_BASLIGI = APIKeyHeader(
+    name="X-API-Anahtari",
+    auto_error=False,
+    description="Entegrasyon kaynağının anahtarı (scripts/entegrasyon.py kaynak-ekle verir)",
+)
+OLAY_DOGRULAYICI = TypeAdapter(EntegrasyonOlayi)
+
+
+def kaynak_dogrula(
+    conn: Baglanti, anahtar: Annotated[str | None, Security(ANAHTAR_BASLIGI)]
+) -> entegrasyon.Kaynak:
+    kaynak = entegrasyon.kaynak_bul(conn, anahtar)
+    if kaynak is None:
+        raise HTTPException(
+            401,
+            "Geçersiz ya da eksik entegrasyon anahtarı.",
+            headers={"WWW-Authenticate": 'ApiKey header="X-API-Anahtari"'},
+        )
+    return kaynak
+
+
+EntegrasyonKaynagi = Annotated[entegrasyon.Kaynak, Depends(kaynak_dogrula)]
+
+
+def _gecersiz_olay(sira: int, ham, hata: ValidationError) -> EntegrasyonSonucu:
+    olay_id = ham.get("olay_id") if isinstance(ham, dict) else None
+    ilk = hata.errors()[0]
+    yer = ".".join(map(str, ilk["loc"])) or "olay"
+    return EntegrasyonSonucu(
+        sira=sira,
+        olay_id=utf8_guvenli(olay_id) if isinstance(olay_id, str) and len(olay_id) <= 128 else None,
+        durum="gecersiz",
+        sonuc=None,
+        ariza_id=None,
+        eslesme=None,
+        hata=utf8_guvenli(f"{yer}: {ilk['msg']}"[:300]),
+    )
+
+
+@router.post(
+    "/entegrasyon/olaylar",
+    response_model=EntegrasyonCevabi,
+    responses={
+        401: {"description": "Anahtar yok, yanlış ya da kaynak kapalı"},
+        413: {"description": "Gövde 1 MB'tan büyük"},
+        429: {"description": "Hız sınırı; Retry-After saniye sonra yeniden dene"},
+    },
+    summary="Makineden ya da sistemden alarm olayları: arıza açar, ekler, kapatır",
+    description="Her olay EntegrasyonOlayi şemasındadır (bkz. Schemas). Olaylar sırayla ve "
+    "her biri ayrı işlemde işlenir; aynı olay_id ile tekrar gelen olay yeniden işlenmez. "
+    "Veritabanı hatasında istek 5xx döner, bağlayıcı aynı olayları yeniden gönderir.",
+)
+def entegrasyon_olaylari(
+    istek: EntegrasyonIstegi, request: Request, conn: Baglanti, kaynak: EntegrasyonKaynagi
+):
+    if bekle := request.app.state.hiz_siniri.al(kaynak.ad, len(istek.olaylar)):
+        raise HTTPException(
+            429,
+            "Çok fazla olay; biraz sonra yeniden deneyin.",
+            headers={"Retry-After": str(math.ceil(bekle))},
+        )
+    sonuclar: list[EntegrasyonSonucu | None] = [None] * len(istek.olaylar)
+    gecerliler: list[tuple[int, entegrasyon.Olay]] = []
+    for sira, ham in enumerate(istek.olaylar):
+        try:
+            g = OLAY_DOGRULAYICI.validate_python(ham)
+        except ValidationError as hata:
+            sonuclar[sira] = _gecersiz_olay(sira, ham, hata)
+            continue
+        veri = g.model_dump() | {"zaman": entegrasyon.zaman_duzelt(g.zaman)}
+        gecerliler.append((sira, entegrasyon.Olay(**veri)))
+    islenen = entegrasyon.olaylari_isle(
+        conn, kaynak, [olay for _, olay in gecerliler], datetime.now(TZ)
+    )
+    for (sira, _), sonuc in zip(gecerliler, islenen, strict=True):
+        sonuclar[sira] = EntegrasyonSonucu(sira=sira, **sonuc.__dict__)
+    return EntegrasyonCevabi(kaynak=kaynak.ad, sonuclar=sonuclar)
+
+
+@router.get(
+    "/entegrasyon/aktif-alarmlar",
+    response_model=list[AktifAlarm],
+    responses={401: {"description": "Anahtar yok, yanlış ya da kaynak kapalı"}},
+    summary="Kaynağın süren alarmları; bağlayıcı yeniden bağlanınca bunlarla uzlaşır",
+)
+def entegrasyon_aktif_alarmlar(conn: Baglanti, kaynak: EntegrasyonKaynagi):
+    return entegrasyon.aktif_alarmlar(conn, kaynak.ad)
+
+
+@router.get(
+    "/entegrasyon/durum",
+    response_model=EntegrasyonDurumu,
+    responses={403: {"description": "Yalnızca bakım rolü"}},
+    summary="Bağlı kaynaklar, süren alarmlar ve son olaylar (anahtarlar gösterilmez)",
+)
+def entegrasyon_durumu(conn: Baglanti, _: Annotated[Kullanici, Depends(rol_gerekli("bakim"))]):
+    return entegrasyon.durum(conn)
+
+
 @router.post(
     "/rapor/vardiya",
     response_model=VardiyaRaporu,
@@ -487,6 +608,27 @@ async def _veri_hatasi(request: Request, hata: psycopg.DataError) -> JSONRespons
     return JSONResponse(status_code=422, content={"detail": "Girdi geçersiz karakter içeriyor."})
 
 
+def utf8_guvenli(deger):
+    """JSON'daki "\\ud800" gibi eşi olmayan vekil karakterler Python dizgesine girer ama UTF-8
+    olarak yazılamaz; yerlerine "?" konur. İç içe liste ve sözlüklerde de."""
+    if isinstance(deger, str):
+        return deger.encode("utf-8", "replace").decode("utf-8")
+    if isinstance(deger, list | tuple):
+        return [utf8_guvenli(d) for d in deger]
+    if isinstance(deger, dict):
+        return {utf8_guvenli(a): utf8_guvenli(d) for a, d in deger.items()}
+    return deger
+
+
+async def _dogrulama_hatasi(request: Request, hata: RequestValidationError) -> JSONResponse:
+    """FastAPI'nin varsayılan 422 cevabı gelen girdiyi ("input") aynen geri yazar. Girdide eşi
+    olmayan vekil karakter varsa cevap UTF-8'e çevrilemez ve 422 yerine 500 dönerdi (bütün uç
+    noktalarda). Aynı cevap, karakterleri temizlenmiş olarak."""
+    return JSONResponse(
+        status_code=422, content={"detail": utf8_guvenli(jsonable_encoder(hata.errors()))}
+    )
+
+
 @asynccontextmanager
 async def lifespan(uygulama: FastAPI):
     # Veritabanı kapalı olsa da uygulama açılsın; /saglik durumu 503 ile bildirir.
@@ -512,7 +654,10 @@ def uygulama_olustur(model_on_yukle: bool = True) -> FastAPI:
         lifespan=lifespan,
     )
     uygulama.state.model_on_yukle = model_on_yukle
+    uygulama.state.hiz_siniri = entegrasyon.HizSiniri()
     uygulama.add_exception_handler(psycopg.DataError, _veri_hatasi)
+    uygulama.add_exception_handler(RequestValidationError, _dogrulama_hatasi)
+    uygulama.add_middleware(GovdeSiniri)
     uygulama.add_middleware(GuvenlikBasliklari)
     uygulama.include_router(router)
     uygulama.mount("/static", StaticFiles(directory=STATIK_KLASOR), name="static")

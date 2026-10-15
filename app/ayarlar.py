@@ -44,6 +44,10 @@ class Ayarlar(BaseSettings):
     # Bakım rolüne her sabah geciken ve o günün periyodik bakımları (Europe/Istanbul saati).
     telegram_bakim_ozeti_saati: time = time(7, 30)
 
+    # Makine entegrasyonu demosu (docker compose --profile entegrasyon): PLC simülatörünü dinleyen
+    # bağlayıcının anahtarı. Verilirse API açılışta "simulator" kaynağını bu anahtarla hazırlar.
+    simulator_anahtari: str | None = None
+
 
 def ayarlar() -> Ayarlar:
     """Her çağrıda yeniden okunur; testlerde ortam değişkeni değiştirmek yeterli olsun."""
