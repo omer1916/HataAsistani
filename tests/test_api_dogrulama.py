@@ -149,3 +149,29 @@ def test_arizalar_sinir_degerleri_kabul_edilir(istemci, parametreler):
 )
 def test_yanlis_http_yontemi_405(istemci, yol):
     assert istemci.post(yol).status_code == 405
+
+
+# JSON'da "\ud800" gibi eşi olmayan vekil karakter. Python dizgesine girer ama UTF-8'e
+# çevrilemez; FastAPI'nin varsayılan 422 cevabı girdiyi geri yazdığı için bütün uç noktalar
+# 500 dönüyordu (makine entegrasyonunun bozuk girdi testinde bulundu).
+VEKIL_GOVDELER = {
+    "chat-soru": ("/chat", b'{"soru": "merhaba \\ud800 dunya"}'),
+    "chat-fazla-alan": ("/chat", b'{"soru": "normal soru", "fazla": "\\udfff"}'),
+    "rapor-tarih": ("/rapor/vardiya", b'{"tarih": "\\ud800"}'),
+    "periyodik-not": ("/periyodik-bakim/1/yapildi", b'{"aciklama": "x\\udc00y"}'),
+    "sozluk-anahtari": ("/rapor/vardiya", b'{"\\ud800": 1}'),
+}
+
+
+@pytest.mark.parametrize(("yol", "govde"), VEKIL_GOVDELER.values(), ids=VEKIL_GOVDELER.keys())
+def test_esi_olmayan_vekil_karakter_422(istemci, sahte_llm, yol, govde):
+    cevap = istemci.post(yol, content=govde, headers={"Content-Type": "application/json"})
+    assert cevap.status_code == 422, cevap.text
+    assert "?" in cevap.text  # karakter cevapta temizlenmiş olarak geri yazılır
+
+
+def test_utf8_guvenli():
+    from app.main import utf8_guvenli
+
+    assert utf8_guvenli({"a\ud800": ["x\udfff", 1, None, ("y",)]}) == {"a?": ["x?", 1, None, ["y"]]}
+    assert utf8_guvenli("İş güvenliği ✓") == "İş güvenliği ✓"

@@ -1,7 +1,7 @@
 """API'nin girdi ve çıktı modelleri."""
 
 from datetime import date, datetime, timedelta
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -345,6 +345,99 @@ class BakimYapildi(BaseModel):
     aciklama: NulsuzMetin | None = Field(
         None, max_length=500, description="Yapılan işler, bulgular", examples=["Conta seti değişti"]
     )
+
+
+class EntegrasyonOlayi(BaseModel):
+    """Bir makineden ya da sistemden gelen alarm olayı (POST /entegrasyon/olaylar)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    olay_id: str = Field(
+        pattern=r"^[A-Za-z0-9._:@/+-]{1,128}$",
+        description="Kaynağın bu olaya verdiği benzersiz kimlik. Aynı kimlikle tekrar gelen olay "
+        "yeniden işlenmez; bağlayıcı emin olmadığı olayı güvenle yeniden gönderebilir.",
+        examples=["P3-HP:A101:1:1792053221115"],
+    )
+    tur: Literal["alarm_basladi", "alarm_bitti"]
+    makine_kodu: str = Field(pattern=r"^[A-Za-z0-9-]{1,20}$", examples=["P3-HP"])
+    alarm_kodu: str = Field(pattern=r"^[A-Za-z0-9._-]{1,64}$", examples=["A101"])
+    zaman: datetime = Field(
+        description="Olayın makinedeki zamanı. Saat dilimi yoksa Türkiye saati sayılır; "
+        "gelecekteyse alınma anına çekilir; 30 günden eskiyse reddedilir.",
+        examples=["2026-10-15T11:36:18+03:00"],
+    )
+    mesaj: NulsuzMetin | None = Field(None, max_length=500, description="Makinenin alarm metni")
+    ariza_tipi: ArizaTipi | None = Field(None, description="Boşsa katalogdan ya da varsayılandan")
+    onem: Onem | None = None
+    hat_durdurur: bool | None = None
+
+
+class EntegrasyonIstegi(BaseModel):
+    """Olaylar verildiği sırayla işlenir. Geçersiz bir olay yalnızca kendisi reddedilir
+    (durum "gecersiz"), diğerleri işlenir."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    olaylar: list[Any] = Field(
+        min_length=1, max_length=500, description="Her biri bir EntegrasyonOlayi"
+    )
+
+
+class EntegrasyonSonucu(BaseModel):
+    sira: int = Field(description="Olayın istekteki sırası (0'dan)")
+    olay_id: str | None
+    durum: Literal["islendi", "tekrar", "gecersiz", "hata"] = Field(
+        description="gecersiz ve hata kalıcıdır: aynı olay yeniden gönderilmemeli"
+    )
+    sonuc: str | None = Field(
+        description="ariza_acildi, ariza_eklendi, ariza_yeniden_acildi, zaten_aktif, "
+        "ariza_kapandi, alarm_kapandi, aktif_alarm_yok"
+    )
+    ariza_id: int | None
+    eslesme: Literal["katalog", "varsayilan"] | None
+    hata: str | None
+
+
+class EntegrasyonCevabi(BaseModel):
+    kaynak: str
+    sonuclar: list[EntegrasyonSonucu]
+
+
+class AktifAlarm(BaseModel):
+    kaynak: str
+    makine_kodu: str
+    alarm_kodu: str
+    baslangic: datetime
+    ariza_id: int
+    ariza_aciklamasi: str
+
+
+class EntegrasyonKaynagi(BaseModel):
+    ad: str
+    aciklama: str
+    katalog: str | None
+    aktif: bool
+    son_olay: datetime | None
+    aktif_alarm: int
+
+
+class EntegrasyonKaydi(BaseModel):
+    kaynak: str
+    olay_id: str
+    tur: str
+    makine_kodu: str
+    alarm_kodu: str
+    mesaj: str | None
+    zaman: datetime
+    alinma: datetime
+    sonuc: str
+    ariza_id: int | None
+
+
+class EntegrasyonDurumu(BaseModel):
+    kaynaklar: list[EntegrasyonKaynagi]
+    aktif_alarmlar: list[AktifAlarm]
+    son_olaylar: list[EntegrasyonKaydi]
 
 
 class AramaIstegi(BaseModel):

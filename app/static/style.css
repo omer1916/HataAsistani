@@ -145,6 +145,16 @@ code {
   font-size: 0.9rem;
 }
 
+.marka strong {
+  white-space: nowrap; /* altı sekmeyle üst çubuk dolunca ad iki satıra bölünmesin */
+}
+
+@media (max-width: 1500px) {
+  .alt-baslik {
+    display: none;
+  }
+}
+
 /* HA monogramı; rengi yazıdan gelir (currentColor), sarı üçgen sabit */
 .logo {
   flex: none;
@@ -1379,4 +1389,15 @@ h3 {
 .yapildi-formu input[type="date"],
 .yapildi-formu input[type="number"] {
   width: auto;
+}
+
+/* --- Makine bağlantıları ---------------------------------------------------- */
+
+#makine-icerik {
+  padding-bottom: 32px;
+}
+
+.makine-tablosu th,
+.makine-tablosu td {
+  text-align: left;
 }

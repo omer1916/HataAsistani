@@ -23,6 +23,7 @@ UC_NOKTALAR = {
     "oee": ("GET", "/oee?hat=Pres%203", None, {"operator": 200, "bakim": 200}),
     "bakim-plani": ("GET", "/bakim-plani", None, {"operator": 403, "bakim": 200}),
     "periyodik": ("GET", "/periyodik-bakim", None, {"operator": 403, "bakim": 200}),
+    "entegrasyon-durum": ("GET", "/entegrasyon/durum", None, {"operator": 403, "bakim": 200}),
     # Olmayan plan: bakım rolü 404 alır, veritabanına bir şey yazılmaz.
     "periyodik-yapildi": (
         "POST",

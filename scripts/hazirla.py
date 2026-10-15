@@ -16,6 +16,7 @@ from datetime import datetime
 import psycopg
 from psycopg import sql
 
+from app import entegrasyon
 from app.ayarlar import Ayarlar, ayarlar
 from app.db import TZ, baglan
 from app.embedding import varsayilan_embedder
@@ -70,8 +71,13 @@ def main() -> None:
         with baglan() as conn:
             seed.veritabanina_yaz(conn, veri)
             seed.demo_kullanicilari_yaz(conn, ayarlar().demo_parola)
-    with baglan() as conn:  # sonradan eklenen Telegram tabloları; mevcut veriye dokunmaz
+    with baglan() as conn:  # sonradan eklenen Telegram ve entegrasyon tabloları; veriye dokunmaz
         conn.execute(seed.TELEGRAM_SEMASI.read_text(encoding="utf-8"))
+        conn.execute(seed.ENTEGRASYON_SEMASI.read_text(encoding="utf-8"))
+        entegrasyon.katalogu_yukle(conn)
+        if anahtar := ayarlar().simulator_anahtari:
+            entegrasyon.demo_kaynagi_hazirla(conn, anahtar)
+            print("Simülatör kaynağı .env'deki SIMULATOR_ANAHTARI ile hazır.", flush=True)
     if ingest_gerekli:
         print(
             "Kılavuzlar yüklenmemiş; PDF'ler işleniyor (ilk seferde model indirilir)...", flush=True

@@ -28,6 +28,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "asyncua>=2.1,<3",  # makine bağlayıcısı ve PLC simülatörü (entegrasyon/); testleri için
     "fpdf2>=2.8",  # sahte kılavuzların PDF'lerini üretmek için
     "httpx2",  # FastAPI TestClient için
     "hypothesis>=6",  # özellik tabanlı testler

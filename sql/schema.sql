@@ -10,8 +10,8 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
 DROP TABLE IF EXISTS talep_fotograflari, vardiya_duruslari, vardiya_uretimi, bakim_talepleri,
-                     is_emirleri, periyodik_bakimlar, stok, ariza_kayitlari, makineler, hatlar,
-                     kullanicilar;
+                     is_emirleri, periyodik_bakimlar, entegrasyon_olaylari, aktif_alarmlar, stok,
+                     ariza_kayitlari, makineler, hatlar, kullanicilar;
 
 CREATE TABLE kullanicilar (
     id             integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
