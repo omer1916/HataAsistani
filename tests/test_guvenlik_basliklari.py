@@ -74,3 +74,14 @@ def test_uygulamanin_kendi_basligi_ezilmez():
     cevap = TestClient(uygulama).get("/ozel")
     assert cevap.headers["referrer-policy"] == "same-origin"
     assert cevap.headers.get_list("referrer-policy") == ["same-origin"]
+
+
+def test_arayuz_her_acilista_dogrulanir_degismeyen_dosya_inmez(istemci_dbsiz):
+    # Güncellemeden sonra tarayıcı eski JS'i kendi kendine kullanmasın (no-cache), ama değişmeyen
+    # dosya için 304 dönsün.
+    for yol in ("/", "/static/app.js", "/static/periyodik.js", "/static/style.css"):
+        assert istemci_dbsiz.get(yol).headers["cache-control"] == "no-cache", yol
+    ilk = istemci_dbsiz.get("/static/app.js")
+    tekrar = istemci_dbsiz.get("/static/app.js", headers={"If-None-Match": ilk.headers["etag"]})
+    assert tekrar.status_code == 304 and tekrar.content == b""
+    assert "cache-control" not in istemci_dbsiz.get("/openapi.json").headers  # API dokunulmaz

@@ -89,6 +89,7 @@ def test_arac_semalari_llm_icin_sade():
         "ariza_say",
         "oee_hesapla",
         "bakim_plani_oner",
+        "periyodik_bakim_durumu",
         "dokuman_ara",
         "stok_sorgula",
         "bakim_talebi_olustur",

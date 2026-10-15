@@ -12,12 +12,12 @@ LLM'e serbest SQL yazdırılmaz; yalnızca buradaki parametreli fonksiyonları �
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 import psycopg
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
-from app import bakim_plani, rag, sorgular
+from app import bakim_plani, periyodik, rag, sorgular
 from app.auth import Kullanici
 from app.db import TZ
 from app.embedding import Embedder
@@ -92,6 +92,15 @@ class OeeGirdisi(BaseModel):
 class BakimPlaniGirdisi(BaseModel):
     kapasite_saat: int = Field(16, ge=1, le=200, description="Bakım ekibinin ayırabileceği saat")
     ufuk_gun: int = Field(7, ge=1, le=30, description="Kaç günlük arıza riskine göre planlansın")
+
+
+class PeriyodikBakimGirdisi(BaseModel):
+    makine_kodu: str | None = Field(None, description="Makine kodu, örn. 'P3-HP'")
+    hat: str | None = Field(None, description="Hat adı, örn. 'Pres 3'")
+    durum: Literal["gecikti", "yaklasiyor", "zamaninda"] | None = Field(
+        None,
+        description="Yalnızca bu durumdakiler: gecikti, yaklasiyor (7 gün içinde), zamaninda",
+    )
 
 
 def _hat_dogrula(b: AracBaglami, hat: str | None) -> None:
@@ -202,6 +211,8 @@ def _plan_satiri(r: dict) -> dict:
     }
     if r["su_an_arizali"]:
         satir["not"] = "şu an arızalı; bakım tamirden sonra"
+    if r["zorunlu"]:
+        satir["geciken_periyodik_bakim"] = ", ".join(r["gecikmis_bakimlar"])
     return satir
 
 
@@ -210,15 +221,66 @@ def _bakim_plani_oner(b: AracBaglami, g: BakimPlaniGirdisi) -> dict:
         raise AracHatasi("Bakım planı yalnızca bakım mühendislerine açık.")
     plan = bakim_plani.bakim_plani(b.conn, b.simdi, **g.model_dump())
     secilen = [r for r in plan["makineler"] if r["secildi"]]
-    disarida = [r for r in plan["makineler"] if not r["secildi"] and r["kazanc_dk"] > 0]
+    disarida = [
+        r for r in plan["makineler"] if not r["secildi"] and r["kazanc_dk"] > 0 and not r["zorunlu"]
+    ]
+    sigmayan_zorunlu = [r for r in plan["makineler"] if r["zorunlu"] and not r["secildi"]]
     return {
         **g.model_dump(),
         "secilen_saat": plan["secilen_saat"],
+        "geciken_periyodik_bakima_ayrilan_saat": plan["periyodik_saat"],
         "onlenmesi_beklenen_durus_dk": round(plan["onlenen_durus_dk"]),
         "plan": [_plan_satiri(r) for r in secilen],
         "kapasite_yetmeyen_en_riskliler": [_plan_satiri(r) for r in disarida[:3]],
-        "aciklama": f"Olasılıklar son {plan['analiz_gun']} günün arızalarından tahmin edildi; "
+        "kapasite_yetmeyen_geciken_periyodik": [_plan_satiri(r) for r in sigmayan_zorunlu],
+        "aciklama": "Geciken periyodik bakımı olan makineler plana önce girer (en çok geciken "
+        f"önce). Olasılıklar son {plan['analiz_gun']} günün arızalarından tahmin edildi; "
         "bakımın önleyebileceği arıza payları varsayımdır.",
+    }
+
+
+def _periyodik_bakim_durumu(b: AracBaglami, g: PeriyodikBakimGirdisi) -> dict:
+    if b.kullanici.rol != "bakim":
+        raise AracHatasi("Periyodik bakım takibi yalnızca bakım mühendislerine açık.")
+    _hat_dogrula(b, g.hat)
+    if g.makine_kodu and sorgular.makine_bul(b.conn, g.makine_kodu) is None:
+        gecerli = ", ".join(sorgular.makine_kodlari(b.conn))
+        raise AracHatasi(f"'{g.makine_kodu}' kodlu makine yok. Geçerli kodlar: {gecerli}")
+    bugun = b.simdi.astimezone(TZ).date()
+    bakimlar = periyodik.bakimlari_getir(
+        b.conn,
+        bugun,
+        makine_kodu=g.makine_kodu,
+        hat=sorgular.hat_adini_bul(b.conn, g.hat) if g.hat else None,
+    )
+    secilen = [x for x in bakimlar if g.durum is None or x["durum"] == g.durum]
+
+    def satir(x: dict) -> dict:
+        s = {
+            "makine": x["makine_kodu"],
+            "makine_adi": x["makine_adi"],
+            "hat": x["hat"],
+            "bakim": x["bakim"],
+            "aralik_gun": x["aralik_gun"],
+            "son_bakim": x["son_bakim"].isoformat(),
+            "son_yapan": x["son_yapan"],
+            "siradaki": x["siradaki"].isoformat(),
+            "durum": periyodik.DURUM_ADLARI[x["durum"]],
+            "kalan": periyodik.kalan_metni(x["kalan_gun"]),
+            "kaynak": f"{x['dokuman_kodu']}, s. {x['sayfa']}"
+            if x["dokuman_kodu"]
+            else "kılavuzda bu makine için takvim yok; genel aylık bakım",
+        }
+        if not x["kayitli"]:
+            s["not"] = "son bakım sisteme geçmeden önceki kayıttan"
+        if g.makine_kodu:  # tek makine sorulduysa yapılacaklar da
+            s["yapilacaklar"] = x["yapilacaklar"]
+        return s
+
+    return {
+        "bugun": bugun.isoformat(),
+        **periyodik.ozet(bakimlar),
+        "bakimlar": [satir(x) for x in secilen],
     }
 
 
@@ -288,6 +350,14 @@ ARACLAR = {
             "makinelere dağıtır. Yalnızca bakım rolü.",
             BakimPlaniGirdisi,
             _bakim_plani_oner,
+        ),
+        Arac(
+            "periyodik_bakim_durumu",
+            "Periyodik bakım takibi: her makinenin bakım planları (aylık, 6 aylık, yıllık), son "
+            "bakım tarihi ve yapanı, sıradaki tarih ve durumu (gecikti, yaklaşıyor, zamanında). "
+            "Aralıkların geldiği kılavuz sayfasını da döner. Yalnızca bakım rolü.",
+            PeriyodikBakimGirdisi,
+            _periyodik_bakim_durumu,
         ),
         Arac(
             "stok_sorgula",

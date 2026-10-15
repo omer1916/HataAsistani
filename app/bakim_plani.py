@@ -15,7 +15,8 @@ Her makine için:
 
    kazanç (dk) = önlenebilirlik x arıza olasılığı x arıza başına duruş
 
-Ekibin kapasitesi sonra sırt çantası problemiyle bu kazançlara göre dağıtılır.
+Geciken periyodik bakımlar (app/periyodik.py) zorunludur: kapasite önce onlara, en çok
+gecikenden başlayarak ayrılır. Kalan kapasite sırt çantası problemiyle kazançlara göre dağıtılır.
 """
 
 import math
@@ -24,7 +25,8 @@ from itertools import groupby, pairwise
 
 import psycopg
 
-from app import sorgular
+from app import periyodik, sorgular
+from app.db import TZ
 from app.guvenilirlik import beta_yorumu, model_sec
 from app.planlama import Aday, acgozlu, sirt_cantasi
 
@@ -88,6 +90,9 @@ def makine_riski(satirlar: list[dict], simdi: datetime, ufuk_saat: float, bakim_
         "onlenebilirlik": 0.0,
         "kazanc_dk": 0.0,
         "bakim_saat": max(1, math.ceil(bakim_saat)),
+        "gecikmis_bakimlar": [],  # geciken periyodik bakımlar; bakim_plani doldurur
+        "gecikme_gun": None,
+        "zorunlu": False,
     }
     if not arizalar:
         return risk
@@ -131,13 +136,36 @@ def bakim_plani(
         for kod, grup in groupby(satirlar, key=lambda s: s["makine_kodu"])
     ]
 
-    adaylar = [r for r in riskler if r["kazanc_dk"] > 0]
+    # Geciken periyodik bakımı olan makine zorunlu; süresi geciken bakımların toplamı (riskten
+    # gelen süreden kısa değil). Kapasite yetmezse en çok gecikenler alınır.
+    gecikmisler = periyodik.gecikmis_bakimlar(conn, simdi.astimezone(TZ).date())
+    for r in riskler:
+        planlar = gecikmisler.get(r["makine_kodu"], [])
+        if planlar:
+            r["zorunlu"] = True
+            r["gecikme_gun"] = max(-b["kalan_gun"] for b in planlar)
+            r["gecikmis_bakimlar"] = [
+                f"{b['bakim']} ({-b['kalan_gun']} gün gecikti)" for b in planlar
+            ]
+            r["bakim_saat"] = max(r["bakim_saat"], sum(b["sure_saat"] for b in planlar))
+    secilen, kalan = set(), kapasite_saat
+    for r in sorted(
+        (r for r in riskler if r["zorunlu"]), key=lambda r: (-r["gecikme_gun"], r["makine_kodu"])
+    ):
+        if r["bakim_saat"] <= kalan:
+            secilen.add(r["makine_kodu"])
+            kalan -= r["bakim_saat"]
+    zorunlu_kazanc = sum(r["kazanc_dk"] for r in riskler if r["makine_kodu"] in secilen)
+
+    adaylar = [r for r in riskler if r["kazanc_dk"] > 0 and not r["zorunlu"]]
     esyalar = [Aday(r["bakim_saat"], r["kazanc_dk"]) for r in adaylar]
-    secilen = {adaylar[i]["makine_kodu"] for i in sirt_cantasi(esyalar, kapasite_saat)}
-    acgozlu_kazanc = sum(adaylar[i]["kazanc_dk"] for i in acgozlu(esyalar, kapasite_saat))
+    secilen |= {adaylar[i]["makine_kodu"] for i in sirt_cantasi(esyalar, kalan)}
+    acgozlu_kazanc = zorunlu_kazanc + sum(adaylar[i]["kazanc_dk"] for i in acgozlu(esyalar, kalan))
     for r in riskler:
         r["secildi"] = r["makine_kodu"] in secilen
-    riskler.sort(key=lambda r: (not r["secildi"], -r["kazanc_dk"], r["makine_kodu"]))
+    riskler.sort(
+        key=lambda r: (not r["secildi"], not r["zorunlu"], -r["kazanc_dk"], r["makine_kodu"])
+    )
 
     return {
         "hesaplama_ani": simdi,
@@ -145,6 +173,7 @@ def bakim_plani(
         "ufuk_gun": ufuk_gun,
         "kapasite_saat": kapasite_saat,
         "secilen_saat": sum(r["bakim_saat"] for r in riskler if r["secildi"]),
+        "periyodik_saat": sum(r["bakim_saat"] for r in riskler if r["secildi"] and r["zorunlu"]),
         "onlenen_durus_dk": sum(r["kazanc_dk"] for r in riskler if r["secildi"]),
         "acgozlu_onlenen_durus_dk": acgozlu_kazanc,
         "makineler": riskler,

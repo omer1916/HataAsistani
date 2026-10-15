@@ -45,15 +45,17 @@ def main() -> None:
     veritabanini_bekle()
     with baglan() as conn:
         operasyon_var = _dolu_mu(conn, "hatlar")
-        # Üretim tabloları sonradan eklendi: eski bir veritabanında yoksa seed yeniden çalışır.
-        seed_gerekli = not operasyon_var or not _dolu_mu(conn, "vardiya_uretimi")
+        # Üretim ve periyodik bakım tabloları sonradan eklendi: eski bir veritabanında yoksa seed
+        # yeniden çalışır.
+        eksik = [t for t in ("vardiya_uretimi", "periyodik_bakimlar") if not _dolu_mu(conn, t)]
+        seed_gerekli = not operasyon_var or bool(eksik)
         ingest_gerekli = not _dolu_mu(conn, "dokuman_parcalari")
 
     if seed_gerekli:
         if operasyon_var:
             print(
-                "Üretim (OEE) verisi yok; bütün sahte veri yeniden üretiliyor. Daha önce açılan "
-                "bakım talepleri silinir, LLM kayıtları korunur.",
+                f"{', '.join(eksik)} tablosu yok; bütün sahte veri yeniden üretiliyor. Daha önce "
+                "açılan bakım talepleri silinir; LLM kayıtları ve Telegram bağlantıları korunur.",
                 flush=True,
             )
         else:

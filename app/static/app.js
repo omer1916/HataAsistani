@@ -3,6 +3,7 @@
 import { guvenliMarkdown } from "./metin.js";
 import { oeeEkrani } from "./oee.js";
 import { bakimEkrani } from "./bakim.js";
+import { periyodikEkrani } from "./periyodik.js";
 import { raporEkrani } from "./rapor.js";
 import { telegramPenceresi } from "./telegram.js";
 
@@ -36,6 +37,7 @@ const EKRANLAR = {
   oee: "oee-ekrani",
   rapor: "rapor-ekrani",
   plan: "plan-ekrani",
+  periyodik: "periyodik-ekrani",
 };
 
 // Açık ekran adreste tutulur (#oee, #rapor...): sayfa yenilenince ya da bağlantı
@@ -50,6 +52,7 @@ let bekleniyor = false;
 let aktifEkran = adresinEkrani() ?? "sohbet";
 const rapor = raporEkrani({ api, eleman, rol: () => oturum?.rol });
 const bakim = bakimEkrani({ api, eleman });
+const periyodik = periyodikEkrani({ api, eleman, pdfAc });
 const telegram = telegramPenceresi({ api });
 const oee = oeeEkrani({
   api,
@@ -136,13 +139,18 @@ function ekranSec(ad) {
   if (adresinEkrani() !== ad) history.replaceState(null, "", `#${ad}`);
   for (const [ekran, id] of Object.entries(EKRANLAR)) $(id).hidden = ekran !== ad;
   for (const sekme of $("sekmeler").querySelectorAll(".sekme")) {
-    if (sekme.dataset.ekran === ad) sekme.setAttribute("aria-current", "page");
+    if (sekme.dataset.ekran === ad) {
+      sekme.setAttribute("aria-current", "page");
+      // Telefonda sekme çubuğu yana kayar; açılan ekranın sekmesi görünür kalsın.
+      sekme.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
     else sekme.removeAttribute("aria-current");
   }
   if (ad === "sohbet") $("soru").focus();
   if (ad === "oee") oee.goster();
   if (ad === "rapor") rapor.goster();
   if (ad === "plan") bakim.goster();
+  if (ad === "periyodik") periyodik.goster();
 }
 
 for (const sekme of $("sekmeler").querySelectorAll(".sekme")) {

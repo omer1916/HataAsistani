@@ -45,3 +45,12 @@ $$;
 CREATE OR REPLACE TRIGGER ariza_sinyali
     AFTER INSERT OR UPDATE OF hat_durdu ON ariza_kayitlari
     FOR EACH STATEMENT EXECUTE FUNCTION ariza_sinyali();
+
+-- Günlük özetlerin (ör. sabahki periyodik bakım listesi) gönderildiği günler: bot gün içinde
+-- yeniden başlasa da aynı özet aynı gün ikinci kez gitmez.
+CREATE TABLE IF NOT EXISTS telegram_ozetleri (
+    tur      text        NOT NULL,
+    gun      date        NOT NULL,
+    gonderim timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tur, gun)
+);

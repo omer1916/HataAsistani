@@ -30,6 +30,7 @@
       <button type="button" class="sekme" data-ekran="oee">OEE</button>
       <button type="button" class="sekme" data-ekran="rapor">Vardiya raporu</button>
       <button type="button" class="sekme" data-ekran="plan" data-rol="bakim">Bakım planı</button>
+      <button type="button" class="sekme" data-ekran="periyodik" data-rol="bakim">Periyodik bakım</button>
     </nav>
     <div class="oturum" id="oturum" hidden>
       <span class="kim"><span id="ad-soyad"></span> <span class="rol" id="rol"></span></span>
@@ -240,6 +241,9 @@
             duruşu. Arıza başına duruş, makinenin geçmiş arızalarının hattı durdurduğu sürenin
             ortalamasıdır. Önlenebilirlik, arıza tiplerine göre varsayılan paylardır (ör.
             hidrolik %70, yazılım %10) ve sahadaki bakım kayıtlarıyla güncellenmelidir.</p>
+          <p><strong>Geciken periyodik bakım.</strong> Periyodik bakımı geciken makine plana
+            önce girer (en çok geciken önce); süresi geciken bakımların toplamıdır. Kalan
+            kapasite aşağıdaki gibi dağıtılır.</p>
           <p><strong>Plan.</strong> Toplam bakım süresi kapasiteyi aşmayan ve toplam kazancı en
             büyük olan makine kümesi, 0/1 sırt çantası problemi olarak dinamik programlamayla
             kesin çözülür. Açgözlü seçim (kazanç/saat oranına göre) karşılaştırma için
@@ -247,7 +251,66 @@
         </details>
       </div>
     </section>
+
+    <section id="periyodik-ekrani" class="panel-ekrani" aria-labelledby="periyodik-baslik" hidden>
+      <div class="panel-ust">
+        <div>
+          <h1 id="periyodik-baslik">Periyodik bakım</h1>
+          <p class="soluk">Bakım aralıkları kılavuzlardaki takvimden gelir. Sıradaki bakım, son
+            bakıma aralık eklenerek bulunur; "Yapıldı" ile kaydedilince kendiliğinden kayar.</p>
+        </div>
+        <form id="periyodik-filtre" class="filtre">
+          <label>Hat
+            <select name="hat">
+              <option value="">Bütün hatlar</option>
+            </select>
+          </label>
+          <label>Durum
+            <select name="durum">
+              <option value="">Hepsi</option>
+              <option value="gecikti">Geciken</option>
+              <option value="yaklasiyor">Yaklaşan</option>
+              <option value="zamaninda">Zamanında</option>
+            </select>
+          </label>
+        </form>
+      </div>
+      <p class="soluk" id="periyodik-durum" role="status" tabindex="-1" hidden></p>
+      <div id="periyodik-icerik" hidden>
+        <div class="kpi-izgara" id="periyodik-ozet"></div>
+        <section class="panel-kart plan-karti" aria-labelledby="periyodik-tablo-baslik">
+          <h2 id="periyodik-tablo-baslik">Bakımlar</h2>
+          <div id="periyodik-tablo" class="tablo-kap"></div>
+        </section>
+      </div>
+    </section>
   </main>
+
+  <dialog id="yapildi-penceresi" class="telegram-penceresi" aria-labelledby="yapildi-baslik">
+    <div class="pencere-ust">
+      <h2 id="yapildi-baslik">Bakım yapıldı</h2>
+      <form method="dialog"><button class="metin-dugme">Kapat</button></form>
+    </div>
+    <p><strong id="yapildi-plan"></strong></p>
+    <p class="soluk" id="yapildi-yapilacaklar"></p>
+    <form id="yapildi-formu" class="yapildi-formu">
+      <label>Tarih
+        <input type="date" name="tarih" required>
+      </label>
+      <label>Süre (saat)
+        <input type="number" name="sure_saat" min="0.5" max="24" step="0.5" required
+               inputmode="decimal" autocomplete="off">
+      </label>
+      <label>Not (isteğe bağlı)
+        <textarea name="aciklama" rows="3" maxlength="500"
+                  placeholder="Yapılan işler, bulgular, değişen parçalar"></textarea>
+      </label>
+      <p class="hata-metni" id="yapildi-hata" role="alert" hidden></p>
+      <div class="pencere-dugmeleri">
+        <button type="submit" class="ana-dugme">Kaydet</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="telegram-penceresi" class="telegram-penceresi" aria-labelledby="telegram-baslik">
     <div class="pencere-ust">
