@@ -47,6 +47,9 @@ SEMA_DOSYASI = Path(__file__).resolve().parent.parent / "sql" / "schema.sql"
 TELEGRAM_SEMASI = SEMA_DOSYASI.with_name("telegram.sql")  # eşleştirmeler seed'den sonra da kalır
 # Entegrasyon kaynakları ve alarm kataloğu kalır; olaylar ve aktif alarmlar sıfırlanır.
 ENTEGRASYON_SEMASI = SEMA_DOSYASI.with_name("entegrasyon.sql")
+# Webhook tanımları ve gönderim geçmişi seed'den sonra da kalır. Veri yazıldıktan sonra kurulur:
+# seed'in binlerce geçmiş arızası dış sistemlere bildirim olarak gitmesin.
+WEBHOOK_SEMASI = SEMA_DOSYASI.with_name("webhook.sql")
 GUN_SAYISI = 183  # yaklaşık 6 ay
 
 # (ad, tip, arıza çarpanı): çarpan 1'den büyükse hat ortalamadan sık arıza verir.
@@ -687,6 +690,7 @@ def veritabanina_yaz(conn: psycopg.Connection, veri: dict[str, list[Kayit]]) -> 
                 ).format(sql.Identifier(tablo)),
                 [tablo],
             )
+        cur.execute(WEBHOOK_SEMASI.read_text(encoding="utf-8"))
 
 
 def demo_kullanicilari_yaz(conn: psycopg.Connection, parola: str) -> None:

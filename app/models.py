@@ -417,6 +417,7 @@ class EntegrasyonKaynagi(BaseModel):
     aciklama: str
     katalog: str | None
     aktif: bool
+    yetki: Literal["olay", "okuma"]  # okuma: servis hesabı (yalnızca okur)
     son_olay: datetime | None
     aktif_alarm: int
 

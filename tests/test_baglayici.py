@@ -1,141 +1,52 @@
-"""Bağlayıcı uçtan uca: gerçek OPC UA sunucusu (PLC simülatörü) -> bağlayıcı -> API -> veritabanı.
+"""Bağlayıcı uçtan uca: PLC simülatörü -> bağlayıcı -> API -> veritabanı, dört protokolle.
 
-Her testte simülatör boş bir portta açılır, bağlayıcı ona bağlanır ve olayları test
-veritabanına bağlı API'ye gönderir (httpx ASGITransport; ağ yok). Arızalar veritabanından
-okunur. Ayrıca göndericinin her HTTP cevabındaki davranışı ve diskteki kuyruk.
+Her senaryo OPC UA, Modbus TCP, MQTT ve MTConnect için ayrı ayrı çalışır: simülatör boş
+portlarda açılır, bağlayıcı ona o protokolle bağlanır ve olayları test veritabanına bağlı API'ye
+gönderir (httpx ASGITransport; ağ yok). Arızalar veritabanından okunur. Ayrıca göndericinin her
+HTTP cevabındaki davranışı ve diskteki kuyruk.
 
 Yük testleri ortam değişkeniyle büyür: HA_YOGUN=1
 """
 
 import asyncio
-import os
 import random
-import socket
 import threading
 import time
 from pathlib import Path
 
 import httpx
-import psycopg
 import pytest
+from baglayici_ortami import (
+    HIZLI,
+    PROTOKOLLER,
+    YOGUN,
+    ZAMANSIZ,
+    KesintiliTransport,
+    Ortam,
+    calistir,
+    kosul,
+)
 
-from app import entegrasyon as e
-from entegrasyon.baglayici import Baglayici
 from entegrasyon.gonderici import Gonderici
 from entegrasyon.kuyruk import Kuyruk
 from entegrasyon.opcua import olay_kimligi
-from entegrasyon.simulator import Simulator
-
-YOGUN = os.environ.get("HA_YOGUN") == "1"
-HIZLI = 0.02  # testlerde bekleme ölçeği (gerçekte 1 sn)
 
 
-def bos_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+@pytest.fixture(params=PROTOKOLLER)
+def protokol(request):
+    return request.param
 
 
-@pytest.fixture
-def kaynak(test_veritabani):
-    with psycopg.connect(test_veritabani, autocommit=True) as conn:
-        son = conn.execute("SELECT max(id) FROM ariza_kayitlari").fetchone()[0]
-        ad = f"test-bag-{bos_port()}"
-        anahtar = e.kaynak_ekle(conn, ad, "bağlayıcı testi", katalog="pres-paneli")
-        yield ad, anahtar
-        conn.execute("DELETE FROM entegrasyon_kaynaklari WHERE ad = %s", [ad])
-        conn.execute("DELETE FROM ariza_kayitlari WHERE id > %s", [son])
-
-
-class Ortam:
-    """Simülatör + bağlayıcı + veritabanı sorguları."""
-
-    def __init__(self, istemci, url, kaynak, kuyruk=None, transport=None, adres=None):
-        self.istemci, self.url = istemci, url
-        self.ad, self.anahtar = kaynak
-        self.adres = adres or f"opc.tcp://127.0.0.1:{bos_port()}/test/"
-        self.kuyruk = Kuyruk() if kuyruk is None else kuyruk
-        self.transport = transport or httpx.ASGITransport(app=istemci.app)
-        self.db = psycopg.connect(url, autocommit=True)
-        self.sim: Simulator | None = None
-        self.baglayici: Baglayici | None = None
-
-    async def simulator_ac(self):
-        self.sim = await Simulator(self.adres).baslat()
-        return self.sim
-
-    async def baglayici_ac(self, kuyruk=None):
-        self.dur = asyncio.Event()
-        http = httpx.AsyncClient(transport=self.transport, base_url="http://test")
-        kuyruk = self.kuyruk if kuyruk is None else kuyruk
-        self.baglayici = Baglayici(
-            self.adres, "http://test", self.anahtar, kuyruk, http, ilk_bekleme=HIZLI
-        )
-        self.gorev = asyncio.create_task(self.baglayici.calis(self.dur))
-        await kosul(lambda: self.baglayici.izleyici.bagli.is_set(), "bağlayıcı bağlanmadı")
-        await kosul(lambda: self.baglayici.izleyici.uzlasildi, "uzlaşma bitmedi")
-
-    async def baglayici_kapat(self):
-        self.dur.set()
-        await asyncio.wait_for(self.gorev, 10)
-        await self.baglayici.http.aclose()
-
-    async def kapat(self):
-        if self.baglayici and not self.gorev.done():
-            await self.baglayici_kapat()
-        if self.sim:
-            await self.sim.durdur()
-        self.db.close()
-
-    def acik_arizalar(self) -> list[tuple]:
-        return self.db.execute(
-            "SELECT r.id, m.kod, r.aciklama FROM ariza_kayitlari r "
-            "JOIN makineler m ON m.id = r.makine_id WHERE r.bitis IS NULL AND EXISTS "
-            "(SELECT 1 FROM entegrasyon_olaylari o WHERE o.kaynak = %s AND o.ariza_id = r.id) "
-            "ORDER BY r.id",
-            [self.ad],
-        ).fetchall()
-
-    def aktifler(self) -> set[tuple[str, str]]:
-        return {
-            (m, k)
-            for m, k in self.db.execute(
-                "SELECT m.kod, a.alarm_kodu FROM aktif_alarmlar a "
-                "JOIN makineler m ON m.id = a.makine_id WHERE a.kaynak = %s",
-                [self.ad],
-            )
-        }
-
-    def olaylar(self) -> list[tuple]:
-        return self.db.execute(
-            "SELECT tur, alarm_kodu, sonuc FROM entegrasyon_olaylari WHERE kaynak = %s ORDER BY id",
-            [self.ad],
-        ).fetchall()
-
-
-async def kosul(fonksiyon, mesaj="koşul sağlanmadı", sure=15.0):
-    son = time.monotonic() + sure
-    while not fonksiyon():
-        if time.monotonic() > son:
-            raise AssertionError(mesaj)
-        await asyncio.sleep(0.02)
-
-
-def calistir(istemci, url, kaynak, senaryo, **ayar):
-    async def ana():
-        ortam = Ortam(istemci, url, kaynak, **ayar)
-        try:
-            await senaryo(ortam)
-        finally:
-            await ortam.kapat()
-
-    asyncio.run(ana())
+def yeniden_baglanma_sonuclari(protokol: str) -> list[str]:
+    """Süren alarmla yeniden bağlanınca kayıtlı sonuçlar: aynı kimlik "tekrar" olur ve
+    kaydedilmez; Modbus'ta (zaman damgası yok) yeni kimlik "zaten_aktif" olarak kaydedilir."""
+    return ["ariza_acildi", "zaten_aktif"] if protokol in ZAMANSIZ else ["ariza_acildi"]
 
 
 # --- Temel akış --------------------------------------------------------------------------------
 
 
-def test_alarm_ariza_acar_kapatir_ve_hizli(istemci, test_veritabani, kaynak):
+def test_alarm_ariza_acar_kapatir_ve_hizli(istemci, test_veritabani, kaynak, protokol):
     async def senaryo(o: Ortam):
         sim = await o.simulator_ac()
         await o.baglayici_ac()
@@ -161,10 +72,10 @@ def test_alarm_ariza_acar_kapatir_ve_hizli(istemci, test_veritabani, kaynak):
         ).fetchone()[0]
         assert aciklama == "A101 Hidrolik basınç düşük"
 
-    calistir(istemci, test_veritabani, kaynak, senaryo)
+    calistir(istemci, test_veritabani, kaynak, senaryo, protokol=protokol)
 
 
-def test_birden_cok_makine_ve_alarm(istemci, test_veritabani, kaynak):
+def test_birden_cok_makine_ve_alarm(istemci, test_veritabani, kaynak, protokol):
     async def senaryo(o: Ortam):
         sim = await o.simulator_ac()
         await o.baglayici_ac()
@@ -172,24 +83,22 @@ def test_birden_cok_makine_ve_alarm(istemci, test_veritabani, kaynak):
             await sim.ayarla(makine, kod, True)
         await kosul(lambda: len(o.aktifler()) == 3)
         arizalar = o.acik_arizalar()
-        assert sorted(m for _, m, _ in arizalar) == [
-            "P3-HP",
-            "P3-RB",
-        ]  # HP'nin iki alarmı tek arıza
+        # HP'nin iki alarmı tek arıza
+        assert sorted(m for _, m, _ in arizalar) == ["P3-HP", "P3-RB"]
         hp = next(a for a in arizalar if a[1] == "P3-HP")
         assert "A104" in hp[2] and "A302" in hp[2]
         for makine, kod in [("P3-HP", "A104"), ("P3-HP", "A302"), ("P3-RB", "A401")]:
             await sim.ayarla(makine, kod, False)
         await kosul(lambda: not o.acik_arizalar() and not o.aktifler())
 
-    calistir(istemci, test_veritabani, kaynak, senaryo)
+    calistir(istemci, test_veritabani, kaynak, senaryo, protokol=protokol)
 
 
 # --- Bağlantı ve yeniden başlatma --------------------------------------------------------------
 
 
 def test_baglaninca_suren_alarm_bildirilir_yeniden_baglaninca_tekrar_acilmaz(
-    istemci, test_veritabani, kaynak
+    istemci, test_veritabani, kaynak, protokol
 ):
     async def senaryo(o: Ortam):
         sim = await o.simulator_ac()
@@ -197,14 +106,15 @@ def test_baglaninca_suren_alarm_bildirilir_yeniden_baglaninca_tekrar_acilmaz(
         await o.baglayici_ac()
         await kosul(lambda: o.aktifler() == {("P3-TR", "A501")})
         await o.baglayici_kapat()
-        await o.baglayici_ac(kuyruk=Kuyruk())  # yeniden başlatma: aynı olay kimliği, "tekrar"
+        await o.baglayici_ac(kuyruk=Kuyruk())  # yeniden başlatma
         await o.baglayici.gonderici.bosalt(5)
-        assert len(o.acik_arizalar()) == 1 and len(o.olaylar()) == 1
+        assert len(o.acik_arizalar()) == 1
+        assert [s for _, _, s in o.olaylar()] == yeniden_baglanma_sonuclari(protokol)
 
-    calistir(istemci, test_veritabani, kaynak, senaryo)
+    calistir(istemci, test_veritabani, kaynak, senaryo, protokol=protokol)
 
 
-def test_baglanti_yokken_biten_alarm_uzlasmayla_kapanir(istemci, test_veritabani, kaynak):
+def test_baglanti_yokken_biten_alarm_uzlasmayla_kapanir(istemci, test_veritabani, kaynak, protokol):
     async def senaryo(o: Ortam):
         sim = await o.simulator_ac()
         await o.baglayici_ac()
@@ -216,32 +126,31 @@ def test_baglanti_yokken_biten_alarm_uzlasmayla_kapanir(istemci, test_veritabani
         await kosul(lambda: not o.aktifler() and not o.acik_arizalar(), "uzlaşılmadı")
         assert o.olaylar()[-1] == ("alarm_bitti", "A301", "ariza_kapandi")
 
-    calistir(istemci, test_veritabani, kaynak, senaryo)
+    calistir(istemci, test_veritabani, kaynak, senaryo, protokol=protokol)
 
 
-def test_plc_kapanip_acilirsa_yeniden_baglanir(istemci, test_veritabani, kaynak):
+def test_plc_kapanip_acilirsa_yeniden_baglanir(istemci, test_veritabani, kaynak, protokol):
     async def senaryo(o: Ortam):
-        await o.simulator_ac()
+        sim = await o.simulator_ac()
         await o.baglayici_ac()
+        await sim.ayarla("P3-HP", "A103", True)
+        await kosul(lambda: o.aktifler() == {("P3-HP", "A103")})
         ilk = o.baglayici.izleyici.baglanti_sayisi
         await o.sim.durdur()
         await kosul(lambda: not o.baglayici.izleyici.bagli.is_set(), "kopma fark edilmedi")
-        sim = await o.simulator_ac()  # aynı adreste yeniden
+        sim = await o.simulator_ac()  # aynı adreste yeniden; PLC açılınca alarmlar sıfır
         await kosul(lambda: o.baglayici.izleyici.baglanti_sayisi > ilk, "yeniden bağlanmadı")
         await kosul(lambda: o.baglayici.izleyici.bagli.is_set())
+        await kosul(lambda: not o.aktifler(), "kopukken biten alarm kapanmadı")
         await sim.ayarla("P3-HP", "A102", True)
         await kosul(lambda: o.aktifler() == {("P3-HP", "A102")})
 
-    calistir(istemci, test_veritabani, kaynak, senaryo)
+    calistir(istemci, test_veritabani, kaynak, senaryo, protokol=protokol)
 
 
-def test_plc_hic_yokken_bekler_gelince_baglanir(istemci, test_veritabani, kaynak):
+def test_plc_hic_yokken_bekler_gelince_baglanir(istemci, test_veritabani, kaynak, protokol):
     async def senaryo(o: Ortam):
-        o.dur = asyncio.Event()
-        http = httpx.AsyncClient(transport=o.transport, base_url="http://test")
-        o.baglayici = Baglayici(o.adres, "http://test", o.anahtar, o.kuyruk, http,
-                                ilk_bekleme=HIZLI)  # fmt: skip
-        o.gorev = asyncio.create_task(o.baglayici.calis(o.dur))
+        await o.baglayici_ac(bekle=False)
         await asyncio.sleep(0.5)  # sunucu yok: hata vermeden yeniden denemeli
         assert not o.gorev.done()
         sim = await o.simulator_ac()
@@ -249,30 +158,15 @@ def test_plc_hic_yokken_bekler_gelince_baglanir(istemci, test_veritabani, kaynak
         await sim.ayarla("P3-RB", "A401", True)
         await kosul(lambda: o.aktifler() == {("P3-RB", "A401")})
 
-    calistir(istemci, test_veritabani, kaynak, senaryo)
+    calistir(istemci, test_veritabani, kaynak, senaryo, protokol=protokol)
 
 
 # --- API kesintisi ve kuyruk -----------------------------------------------------------------
 
 
-class KesintiliTransport(httpx.AsyncBaseTransport):
-    """`acik` False iken her isteğe bağlantı hatası (ya da verilen durum kodu) döner."""
-
-    def __init__(self, ic, kod: int | None = None):
-        self.ic, self.kod, self.acik, self.istekler = ic, kod, False, 0
-
-    async def handle_async_request(self, istek):
-        self.istekler += 1
-        if self.acik:
-            return await self.ic.handle_async_request(istek)
-        if self.kod:
-            return httpx.Response(self.kod, json={"detail": "bakımda"})
-        raise httpx.ConnectError("API kapalı", request=istek)
-
-
 @pytest.mark.parametrize("kesinti", [None, 503, 500], ids=["ag-yok", "503", "500"])
 def test_api_kapaliyken_olaylar_bekler_acilinca_sirayla_bir_kez_gider(
-    istemci, test_veritabani, kaynak, kesinti
+    istemci, test_veritabani, kaynak, kesinti, protokol
 ):
     transport = KesintiliTransport(httpx.ASGITransport(app=istemci.app), kesinti)
 
@@ -283,7 +177,7 @@ def test_api_kapaliyken_olaylar_bekler_acilinca_sirayla_bir_kez_gider(
         transport.acik = False
         for kod in ["A101", "A102", "A103"]:
             await sim.ayarla("P3-HP", kod, True)
-            await asyncio.sleep(0.15)
+            await kosul(lambda k=kod: o.baglayici.izleyici.durum.get(("P3-HP", k)), "görülmedi")
         await sim.ayarla("P3-HP", "A101", False)
         await kosul(lambda: len(o.kuyruk) == 4, "olaylar kuyruğa girmedi")
         await asyncio.sleep(0.3)  # birkaç başarısız deneme
@@ -297,10 +191,12 @@ def test_api_kapaliyken_olaylar_bekler_acilinca_sirayla_bir_kez_gider(
         assert o.aktifler() == {("P3-HP", "A102"), ("P3-HP", "A103")}
         assert len(o.acik_arizalar()) == 1
 
-    calistir(istemci, test_veritabani, kaynak, senaryo, transport=transport)
+    calistir(istemci, test_veritabani, kaynak, senaryo, transport=transport, protokol=protokol)
 
 
-def test_baglayici_yeniden_baslasa_da_kuyruk_kaybolmaz(istemci, test_veritabani, kaynak, tmp_path):
+def test_baglayici_yeniden_baslasa_da_kuyruk_kaybolmaz(
+    istemci, test_veritabani, kaynak, tmp_path, protokol
+):
     dosya = tmp_path / "kuyruk.sqlite"
     transport = KesintiliTransport(httpx.ASGITransport(app=istemci.app))
 
@@ -315,21 +211,26 @@ def test_baglayici_yeniden_baslasa_da_kuyruk_kaybolmaz(istemci, test_veritabani,
         transport.acik = True
         await o.baglayici_ac(kuyruk=Kuyruk(dosya))  # yeni süreç, aynı dosya
         await kosul(lambda: o.aktifler() == {("P3-HP", "A201")}, "kuyruktaki olay gitmedi")
-        assert len(o.olaylar()) == 1  # bağlanınca gelen ilk değer de aynı kimlik: tekrar
+        await o.baglayici.gonderici.bosalt(5)
+        # Bağlanınca gelen ilk değer: aynı kimlik ("tekrar") ya da Modbus'ta "zaten_aktif".
+        assert [s for _, _, s in o.olaylar()] == yeniden_baglanma_sonuclari(protokol)
 
-    calistir(istemci, test_veritabani, kaynak, senaryo, transport=transport)
+    calistir(istemci, test_veritabani, kaynak, senaryo, transport=transport, protokol=protokol)
 
 
 # --- Yük ------------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("tohum", range(6 if YOGUN else 2))
-def test_hizli_rastgele_degisimlerden_sonra_durum_ayni(istemci, test_veritabani, kaynak, tohum):
-    """Yüzlerce alarm değişimi milisaniyeler arayla. OPC UA ara değerleri birleştirebilir (100 ms
-    içinde açılıp kapanan alarm hiç görünmeyebilir), ama sonunda veritabanındaki süren alarmlar
-    PLC'dekiyle aynı olmalı ve her açık arızanın süren bir alarmı olmalı."""
+@pytest.mark.parametrize("tohum", range(4 if YOGUN else 1))
+def test_hizli_rastgele_degisimlerden_sonra_durum_ayni(
+    istemci, test_veritabani, kaynak, tohum, protokol
+):
+    """Yüzlerce alarm değişimi milisaniyeler arayla. Ara değerler birleşebilir (OPC UA
+    aboneliği, Modbus ve MTConnect yoklaması kısa alarmı görmeyebilir), ama sonunda
+    veritabanındaki süren alarmlar PLC'dekiyle aynı olmalı ve her açık arızanın süren bir alarmı
+    olmalı."""
     adet = 3000 if YOGUN else 400
-    rng = random.Random(tohum)
+    rng = random.Random(f"{protokol}-{tohum}")
 
     async def senaryo(o: Ortam):
         sim = await o.simulator_ac()
@@ -346,13 +247,13 @@ def test_hizli_rastgele_degisimlerden_sonra_durum_ayni(istemci, test_veritabani,
         acik = o.acik_arizalar()
         assert sorted({m for _, m, _ in acik}) == sorted({m for m, _ in beklenen})
         assert o.baglayici.gonderici.atilan == 0
-        # Bağlayıcı yeniden başlasa da (aynı durum) hiçbir şey değişmez.
+        # Bağlayıcı yeniden başlasa da (aynı durum) hiçbir arıza değişmez.
         await o.baglayici_kapat()
         await o.baglayici_ac(kuyruk=Kuyruk())
         await o.baglayici.gonderici.bosalt(10)
         assert o.aktifler() == beklenen and o.acik_arizalar() == acik
 
-    calistir(istemci, test_veritabani, kaynak, senaryo)
+    calistir(istemci, test_veritabani, kaynak, senaryo, protokol=protokol)
 
 
 # --- Gönderici: her HTTP cevabı ------------------------------------------------------------------

@@ -100,16 +100,38 @@ def plan(tarayici, adres: str, oturum: dict) -> None:
     p.context.close()
 
 
+def periyodik(tarayici, adres: str, oturum: dict) -> None:
+    p = sayfa(tarayici, oturum, 1280, 1300)
+    p.goto(f"{adres}/#periyodik")
+    p.wait_for_selector("#periyodik-icerik:not([hidden])", timeout=60_000)
+    p.wait_for_timeout(800)
+    kaydet(p, "periyodik")
+    p.context.close()
+
+
+def makine(tarayici, adres: str, oturum: dict) -> None:
+    # Süren bir alarm görünsün diye önce simülatörden hattı durdurmayan bir alarm verilir
+    # (Telegram'a bildirim gitmez):
+    #   docker compose exec plc-simulatoru python -m entegrasyon.simulator alarm P3-HP A104
+    p = sayfa(tarayici, oturum, 1280, 1300)
+    p.goto(f"{adres}/#makine")
+    p.wait_for_selector("#makine-icerik:not([hidden])", timeout=60_000)
+    p.wait_for_timeout(800)
+    kaydet(p, "makine")
+    p.context.close()
+
+
 def main() -> None:
     ayrac = argparse.ArgumentParser(description="Sunum ekran görüntülerini alır.")
     ayrac.add_argument("--adres", default="http://127.0.0.1:8000")
     ayrac.add_argument("--parola", default="andon-demo", help="demo kullanıcılarının parolası")
-    ayrac.add_argument("--sadece", nargs="*", help="sohbet, oee, rapor, plan")
+    ayrac.add_argument("--sadece", nargs="*", help="sohbet, oee, rapor, plan, periyodik, makine")
     args = ayrac.parse_args()
 
     KLASOR.mkdir(exist_ok=True)
     bakim = oturum_al(args.adres, "bakim", args.parola)
-    adimlar = {"sohbet": sohbet_ve_kaynak, "oee": oee, "rapor": rapor, "plan": plan}
+    adimlar = {"sohbet": sohbet_ve_kaynak, "oee": oee, "rapor": rapor, "plan": plan,
+               "periyodik": periyodik, "makine": makine}  # fmt: skip
     with sync_playwright() as pw:
         tarayici = pw.chromium.launch(channel="chrome", headless=True)
         for ad, adim in adimlar.items():
