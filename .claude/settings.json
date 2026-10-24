@@ -1,16 +1,37 @@
 {
   "extraKnownMarketplaces": {
     "claude-plugins-official": {
-      "source": { "source": "github", "repo": "anthropics/claude-plugins-official" }
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-official"
+      }
     },
     "impeccable": {
-      "source": { "source": "github", "repo": "pbakaus/impeccable", "ref": "skill-v4.4.0" }
+      "source": {
+        "source": "github",
+        "repo": "pbakaus/impeccable",
+        "ref": "skill-v4.4.0"
+      }
     },
     "ui-ux-pro-max-skill": {
-      "source": { "source": "github", "repo": "nextlevelbuilder/ui-ux-pro-max-skill", "ref": "v2.15.0" }
+      "source": {
+        "source": "github",
+        "repo": "nextlevelbuilder/ui-ux-pro-max-skill",
+        "ref": "v2.15.0"
+      }
     },
     "trailofbits": {
-      "source": { "source": "github", "repo": "trailofbits/skills" }
+      "source": {
+        "source": "github",
+        "repo": "trailofbits/skills"
+      }
+    },
+    "ponytail": {
+      "source": {
+        "source": "github",
+        "repo": "DietrichGebert/ponytail",
+        "ref": "v5.3.2"
+      }
     }
   },
   "enabledPlugins": {
@@ -32,7 +53,9 @@
     "property-based-testing@trailofbits": true,
     "differential-review@trailofbits": true,
     "variant-analysis@trailofbits": true,
-    "post-patch-validation@trailofbits": true
+    "post-patch-validation@trailofbits": true,
+    "mattpocock-skills@claude-plugins-official": true,
+    "ponytail@ponytail": true
   },
   "env": {
     "STRIX_TELEMETRY": "0"
