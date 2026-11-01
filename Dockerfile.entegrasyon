@@ -2,7 +2,7 @@
 # kütüphaneleri (OPC UA, Modbus, MQTT) ve httpx; Hata Asistanı'nın koduna ve embedding modeline
 # bağımlı değil, fabrika ağında makinelerin yanında tek başına çalışabilir. amqtt yalnızca
 # simülatörün MQTT aracısı için.
-FROM python:3.12-slim
+FROM python:3.15-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
